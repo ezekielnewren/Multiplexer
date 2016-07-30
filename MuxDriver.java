@@ -42,6 +42,7 @@ public class MuxDriver {
 	}
 	
 	public static void main(String[] args) throws Exception {
+		MuxDriver.getState(null, 0);
 		for (int i=0; i<1000; i++) {
 			try {
 				test();
@@ -54,6 +55,8 @@ public class MuxDriver {
 	}
 	
 	public static void test() throws Exception {
+		log("------------------------------------------");
+		
 		final ByteArrayCircularBuffer clientCB = new ByteArrayCircularBuffer(5000);
 		final ByteArrayCircularBuffer serverCB = new ByteArrayCircularBuffer(5000);
 		
@@ -149,6 +152,7 @@ public class MuxDriver {
 	}
 	
 	public static String getState(Multiplexer home, int channel) {
+		if (home==null) return null;
 		Field[] field = home.getClass().getDeclaredFields();
 		for (int i=0; i<field.length; i++) {
 			try {

@@ -227,7 +227,10 @@ public class Channel implements Closeable {
 						cmParam.state = Multiplexer.STATE_OUTPUT_CLOSING;
 						
 						home.writePacket(channel, input.clearProcessed(), Multiplexer.FLAG_OCL);
-						if (isConnectionClosed()) home.unbind(channel);
+						if (isConnectionClosed()) {
+							cmParam.state = Multiplexer.STATE_CHANNEL_CLOSED;
+							home.unbind(channel);
+						}
 					} finally {
 						cmParam.state = Multiplexer.STATE_OUTPUT_CLOSED;
 						home.signal(signal);
@@ -263,6 +266,7 @@ public class Channel implements Closeable {
 						throw new IOException("close timeout other side may not be closed");
 					}
 					
+					cmParam.state = Multiplexer.STATE_CHANNEL_CLOSED;
 					home.unbind(channel);
 				} finally {
 					cmParam.state = Multiplexer.STATE_CHANNEL_CLOSED;

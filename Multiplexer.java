@@ -46,7 +46,7 @@ public class Multiplexer implements Closeable {
 	public static final long DEFAULT_CLOSE_TIMEOUT = 3000;
 
 	public Multiplexer(InputStream is, OutputStream os, int... prePasvOpen) throws IOException {
-		MuxDriver.log("constructor start");
+		//MuxDriver.log("constructor start");
 		// initialize input and output
 		input = (is instanceof DataInputStream)?(DataInputStream)is:new DataInputStream(is);
 		output = (os instanceof DataOutputStream)?(DataOutputStream)os:new DataOutputStream(os);
@@ -65,7 +65,7 @@ public class Multiplexer implements Closeable {
 	
 			// start the demultiplexer to switch incoming packets
 			segregator = new Demultiplexer(this);
-			MuxDriver.log("constructor end");
+			//MuxDriver.log("constructor end");
 		} catch (RuntimeException re) {
 			input.close();
 			output.close();
@@ -182,6 +182,8 @@ public class Multiplexer implements Closeable {
 		if (isClosed()) throw new IOException("Multiplexer Closed");
 		synchronized(fieldLock) {
 			// get parameters for channel
+			log("connecting");
+			
 			ChannelParameter cmParam = getCP(channel);
 			legal(channel, STATE_UNBOUND|STATE_CONNECTING);
 			
@@ -192,6 +194,10 @@ public class Multiplexer implements Closeable {
 			// request connection and wait for the response
 			writePacket(channel, bufferSize, FLAG_SYN|FLAG_CLI);
 			if (await(cmParam.signal, timeout)>timeout) {
+				log("timeout");
+				cmParam.state = STATE_CHANNEL_CLOSED;
+				unbind(channel);
+				legal(channel, STATE_UNBOUND);
 				throw new ChannelTimeoutException("Channel timed out");
 			}
 			
@@ -205,10 +211,12 @@ public class Multiplexer implements Closeable {
 				}
 				Channel cm = (cmParam.channel=new Channel(home, channel, cmParam.recv, cmParam.send));
 				cmParam.state = STATE_ESTABLISHED;
+				log("connected");
 				return cm;
 			} finally {
 				// tell the Demultiplexer that he can resume packet-switching
 				signal(segregator.signal);
+				
 				
 			}
 		}
@@ -223,6 +231,8 @@ public class Multiplexer implements Closeable {
 		if (isClosed()) throw new IOException("Multiplexer Closed");
 		synchronized(fieldLock) {
 			// get parameters for channel
+			log("accepting");
+			
 			ChannelParameter cmParam = getCP(channel);
 			legal(channel, STATE_UNBOUND|STATE_PRE_PASV_OPEN|STATE_ACCEPTING);
 			
@@ -232,6 +242,7 @@ public class Multiplexer implements Closeable {
 			
 			
 			if (cmParam.send==0&&await(cmParam.signal)>timeout) {
+				log("timeout");
 				cmParam.state = STATE_CHANNEL_CLOSED;
 				unbind(channel);
 				throw new ChannelTimeoutException("Time limit reached");
@@ -248,6 +259,7 @@ public class Multiplexer implements Closeable {
 				
 				writePacket(channel, bufferSize, FLAG_SYN);
 				cmParam.state = STATE_ACCEPTED;
+				log("accepted");
 				return cm;
 			} finally {
 				signal(segregator.signal);
@@ -259,12 +271,12 @@ public class Multiplexer implements Closeable {
 	
 	class Demultiplexer implements Runnable {
 
-		final Multiplexer parent;
+		final Multiplexer home;
 		final AtomicBoolean signal;
 		final Thread handle;
 		
 		public Demultiplexer(Multiplexer parent) {
-			this.parent = parent;
+			this.home = parent;
 			signal = new AtomicBoolean();
 			handle = new Thread(this);
 			handle.setName(Thread.currentThread().getName()+"segregator");
@@ -341,13 +353,13 @@ public class Multiplexer implements Closeable {
 							if (cm.localInputClosed) 
 							break;
 						case FLAG_ICL:
-							synchronized(cm.fieldLock) {
+							synchronized(fieldLock) {
 								cm.remoteInputClosed = true;
 								cm.output.close(false);
 								cm.fieldLock.notifyAll();
 							}
 						case (FLAG_ICL|FLAG_OCL):
-							synchronized(cm.fieldLock) {
+							synchronized(fieldLock) {
 								cm.remoteInputClosed = true;
 								cm.remoteOutputClosed = true;
 								cm.close(false);
@@ -394,9 +406,13 @@ public class Multiplexer implements Closeable {
 			try {
 				if (closed==MULTIPLEXER_CLOSED) return;
 				closed = MULTIPLEXER_CLOSING;
+				
+				log("closing");
+				
 				IOException ioe = null;
 				try {
 					writePacket(0, 0, FLAG_MCL);
+					log("waiting for close reply");
 					await(remoteClosed, timeout);
 				} catch(IOException e) {
 					ioe=e;
