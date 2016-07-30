@@ -9,13 +9,10 @@ import java.lang.reflect.Field;
 import java.net.ServerSocket;
 import java.net.Socket;
 
-//import io.ByteArrayCircularBuffer;
-import io.MultiOutputStream;
-
 public class MuxDriver {
 
 	static FileOutputStream fos;
-	static MultiOutputStream mos;
+	//static MultiOutputStream mos;
 	static PrintStream logOut;
 	static boolean DEBUG = System.console()==null&&true;
 	
@@ -28,9 +25,7 @@ public class MuxDriver {
 	static {
 		try {
 			fos = new FileOutputStream("MuxDriver.log");
-			mos = new MultiOutputStream(fos);
-			mos.addOutputStream(System.out);
-			logOut = new PrintStream(mos);
+			logOut = System.out;
 		} catch (IOException ioe) {
 			ioe.printStackTrace();
 			System.exit(1);
