@@ -1,6 +1,5 @@
 package net.multiplexer;
 
-import java.io.Closeable;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -12,7 +11,7 @@ import java.util.zip.CRC32;
 
 import static net.multiplexer.MuxDriver.*;
 
-public class Multiplexer implements Closeable {
+public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 
 	private final Multiplexer home = this;
 	private final DataInputStream input;
@@ -222,8 +221,10 @@ public class Multiplexer implements Closeable {
 		}
 	}
 
-	public Channel accept(int c, int b) throws IOException {return accept(c, b, DEFAULT_CONNECTION_TIMEOUT);}
-	public Channel accept(int c, int b, long t) throws IOException {return accept(c, b, t);}
+	
+	public Channel accept(int c, int b) throws IOException {return accept(c, b, DEFAULT_CONNECTION_TIMEOUT, false);}
+	public Channel accept(int c, int b, boolean r) throws IOException {return accept(c, b, DEFAULT_CONNECTION_TIMEOUT, r);}
+	public Channel accept(int c, int b, long t) throws IOException {return accept(c, b, t, false);}
 	public Channel accept(int channel, int bufferSize, long timeout, boolean recurring) throws IOException {
 		//MuxDriver.log("accept called");
 		ChannelParameter.valid(channel, bufferSize);
@@ -537,5 +538,7 @@ public class Multiplexer implements Closeable {
 			b[off+i] = (byte) ((num>>>(len-1-i)*8)&0xFF);
 		}
 	}
+
+	
 
 }
