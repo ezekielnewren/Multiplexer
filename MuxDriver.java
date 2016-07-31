@@ -12,15 +12,8 @@ import java.net.Socket;
 public class MuxDriver {
 
 	static FileOutputStream fos;
-	//static MultiOutputStream mos;
 	static PrintStream logOut;
 	static boolean DEBUG = System.console()==null&&true;
-	
-	public static Multiplexer home;
-	public static int channel = 17;
-	static Multiplexer client;
-	static Multiplexer server;
-	static Channel[] cm = new Channel[0x10000];
 	
 	static {
 		try {
@@ -37,20 +30,7 @@ public class MuxDriver {
 		logOut.println("["+Thread.currentThread().getName()+"]: "+message);
 	}
 	
-	static class data {
-		
-	}
-	
 	public static void main(String[] args) throws Exception {
-		MuxDriver.getState(null, 0);
-		for (int i=0; i<1000; i++) {
-			try {
-				test();
-			} catch (Exception e) {
-				e.printStackTrace();
-				break;
-			}
-		}
 		
 	}
 	
@@ -74,81 +54,41 @@ public class MuxDriver {
 		final InputStream sis = network?tcpserver.getInputStream():serverCB.getInputStream();
 		final OutputStream sos = network?tcpserver.getOutputStream():clientCB.getOutputStream();
 		
+		final ClientMultiplexer csup = new Multiplexer(cis, cos);
+		final ServerMultiplexer ssup = new Multiplexer(sis, sos, 13036);
 		
+		final int channel = 15157;
 		
-		Thread clientThread = new Thread() {
+		Thread clientThread = new Thread(new Runnable() {
 			public void run() {
 				try {
-					client = new Multiplexer(cis, cos);
-					//client.getState(3);
-					Channel cm = client.connect(channel, 600, Long.MAX_VALUE);
+					Channel cm = csup.connect(channel, 49772);
 					
 					cm.close();
-					
-					client.close(0);
-				} catch (Exception ioe) {
-					ioe.printStackTrace();
-				}
-			}
-		};
-		
-		
-		Thread serverThread = new Thread() {
-			public void run() {
-				try {
-					//int channel = MuxDriver.channel;
-					server = new Multiplexer(sis, sos, channel);
-					Channel cm = server.accept(channel, 7, Long.MAX_VALUE, true);
-
-					cm.close();
-					
-					server.close(0);
-					
-				} catch (Exception ioe) {
-					ioe.printStackTrace();
-				}
-			}
-		};
-
-		Thread subProccess = new Thread(new Runnable() {
-			public void run() {
-				try {
-					if (server!=null) {
-						Channel cm = server.accept(3, 700, Long.MAX_VALUE, true);
-					
-						cm.close();
-					}
 				} catch (IOException e) {
 					e.printStackTrace();
 				}
 			}
 		});
 		
-		clientThread.setName("---clientSide---");
-		subProccess.setName("---unwanted3rdParty---");
-		serverThread.setName("---serverSide---");
+		Thread serverThread = new Thread(new Runnable() {
+			public void run() {
+				try {
+					Channel cm = ssup.accept(channel, 13036, true);
+					
+					cm.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			}
+		});
 		
-		clientThread.start();
-		//subProccess.start();
-		serverThread.start();
+		clientThread.setName("--client--");clientThread.start();
+		serverThread.setName("--server--");serverThread.start();
 		
 		clientThread.join();
-		subProccess.join();
 		serverThread.join();
 		
-		ss.close();
-		tcpclient.close();
-		tcpserver.close();
-	}
-	
-	public static String setHome() {
-		String tmp = Thread.currentThread().getName();
-		if (tmp.equals("---clientSide---")) {
-			home = client;
-		} else {
-			home = server;
-		}
-		return tmp;
 	}
 	
 	public static String getState(Multiplexer home, int channel) {
