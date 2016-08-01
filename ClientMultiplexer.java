@@ -1,4 +1,4 @@
-package net.multiplexer;
+package com.github.ezekielnewren.net.multiplexer;
 
 import java.io.IOException;
 

@@ -1,4 +1,4 @@
-package net.multiplexer;
+package com.github.ezekielnewren.net.multiplexer;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -9,7 +9,7 @@ import java.util.BitSet;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.CRC32;
 
-import static net.multiplexer.MuxDriver.*;
+import static com.github.ezekielnewren.net.multiplexer.MuxDriver.*;
 
 public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 
