@@ -1,1 +1,6 @@
-/home/zeke/development/java/.gitignore
+## comment
+*.*
+!*.java
+!*.txt
+!README.md
+!.gitignore
