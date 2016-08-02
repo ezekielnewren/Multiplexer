@@ -9,8 +9,6 @@ import java.util.BitSet;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.CRC32;
 
-import static com.github.ezekielnewren.net.multiplexer.MuxDriver.*;
-
 public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 
 	private final Multiplexer home = this;
@@ -26,7 +24,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	private final static int MULTIPLEXER_OPEN = 0;
 	private final static int MULTIPLEXER_CLOSING = 1;
 	private final static int MULTIPLEXER_CLOSED = 2;
-	private int closed = MULTIPLEXER_OPEN;
+	private volatile int closed = MULTIPLEXER_OPEN;
 
 	final Demultiplexer segregator;
 	final Object fieldLock = this;
@@ -72,18 +70,59 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		}
 	}
 
+	// TODO note: private helper functions
+
+	/**
+	 * Turns a byte array into a long. The byte array must be in network byte order with
+	 * num[0] being the most significant and num[len-1] being the least significant.
+	 * @param num the byte array holding the number to be converted.
+	 * @param off starting byte
+	 * @param len defines the size of the scalar to be converted. Valid range is [1-8] inclusive.
+	 * @return
+	 */
+	private static long bytesToNumber(byte[] num, int off, int len) {
+		if (off+len > num.length) throw new IndexOutOfBoundsException("byte array len="+num.length+" off="+off+" len="+len);
+		if (len < 1 || len > 8) throw new IndexOutOfBoundsException("Improper length "+len);
+		long out = 0;
+		for (int i=0; i<len; i++) {
+			out += num[off+i]&0xFF;
+			if (i<len-1) out <<= 8;
+		}
+		return out;
+	}
+
+	/**
+	 * Turns an integer of any length into a byte array of network byte order. 
+	 * @param num the integer to be converted. Even though the parameter defines a long 
+	 * smaller scalars types can passed into the function as well.
+	 * @param b the byte array holding the result
+	 * @param off starting byte
+	 * @param len defines the size of the scalar to be converted. Valid range is [1-8] inclusive.
+	 */
+	private static void numberToBytes(long num, byte[] b, int off, int len) {
+		if (off+len > b.length) throw new IndexOutOfBoundsException("byte array len="+b.length+" off="+off+" len="+len);
+		if (len < 1 || len > 8) throw new IndexOutOfBoundsException("Improper length "+len);
+		for (int i=0; i<len; i++) {
+			b[off+i] = (byte) ((num>>>(len-1-i)*8)&0xFF);
+		}
+	}
+	
 	void writePacket(int channel, int processed, byte[] b, int off, int len, int flags) throws IOException {
+		ChannelParameter.validChannel(channel);
+		if (processed!=0) ChannelParameter.validBufferSize(processed);
+		if (b!=null) {
+			if ((off < 0) || (off > b.length) || (len < 0) ||
+					((off + len) > b.length) || ((off + len) < 0) ||
+					(len>0xffff)) {
+				throw new IndexOutOfBoundsException();
+			}
+		} else {
+			if ((off|len)!=0) throw new IllegalArgumentException("len and off must be 0 if b is null");
+		}
+		if (flags>0xff) throw new IllegalArgumentException();
+		if (isClosed()) throw new IOException("Multiplexer Closed");
 		synchronized(fieldLock) {
 			// 2B_len, 2B_channel, 3B_proc, 1B_flags, ...B_payload, 4B_crc
-			if (b!=null) {
-				if ((off < 0) || (off > b.length) || (len < 0) ||
-						((off + len) > b.length) || ((off + len) < 0) ||
-						(len>0xffff)) {
-					throw new IndexOutOfBoundsException();
-				}
-			} else {
-				if ((off|len)!=0) throw new IllegalArgumentException("len and off must be 0 if b is null");
-			}
 
 			// header
 			numberToBytes(len, sendBuffer, 0, 2);
@@ -93,15 +132,16 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 
 			// trailer
 			sendCRC.reset();
-			sendCRC.update(sendBuffer, 0, 8+len);
-			numberToBytes(sendCRC.getValue(), sendBuffer, 8+len, 4);
+			sendCRC.update(sendBuffer, 0, 8);
+			if (b!=null) sendCRC.update(b, off, len);
+			numberToBytes(sendCRC.getValue(), sendBuffer, 8, 4);
 
 			try {
 				output.write(sendBuffer, 0, 8);
 				if (b!=null) output.write(b, 0, len);
 				output.write(sendBuffer, 8, 4);
 			} catch (IOException ioe) {
-				MuxDriver.log("failed to write a packet");
+				//MuxDriver.log("failed to write a packet");
 				closeQuietly();
 				throw ioe;
 			}
@@ -174,6 +214,8 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		}
 	}
 	
+	// TODO note: public access functions
+	
 	public Channel connect(int channel, int bufferSize) throws IOException {return connect(channel, bufferSize, DEFAULT_CONNECTION_TIMEOUT);}
 	public Channel connect(int channel, int bufferSize, long timeout) throws IOException {
 		ChannelParameter.valid(channel, bufferSize);
@@ -181,7 +223,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		if (isClosed()) throw new IOException("Multiplexer Closed");
 		synchronized(fieldLock) {
 			// get parameters for channel
-			log("connecting");
+			//MuxDriver.log("connecting");
 			
 			ChannelParameter cmParam = getCP(channel);
 			legal(channel, STATE_UNBOUND|STATE_CONNECTING);
@@ -193,7 +235,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 			// request connection and wait for the response
 			writePacket(channel, bufferSize, FLAG_SYN|FLAG_CLI);
 			if (await(cmParam.signal, timeout)>timeout) {
-				log("timeout");
+				//MuxDriver.log("timeout");
 				cmParam.state = STATE_CHANNEL_CLOSED;
 				unbind(channel);
 				legal(channel, STATE_UNBOUND);
@@ -210,7 +252,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 				}
 				Channel cm = (cmParam.channel=new Channel(home, channel, cmParam.recv, cmParam.send));
 				cmParam.state = STATE_ESTABLISHED;
-				log("connected");
+				//MuxDriver.log("connected");
 				return cm;
 			} finally {
 				// tell the Demultiplexer that he can resume packet-switching
@@ -232,7 +274,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		if (isClosed()) throw new IOException("Multiplexer Closed");
 		synchronized(fieldLock) {
 			// get parameters for channel
-			log("accepting");
+			//MuxDriver.log("accepting");
 			
 			ChannelParameter cmParam = getCP(channel);
 			legal(channel, STATE_UNBOUND|STATE_PRE_PASV_OPEN|STATE_ACCEPTING);
@@ -243,7 +285,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 			
 			
 			if (cmParam.send==0&&await(cmParam.signal)>timeout) {
-				log("timeout");
+				//MuxDriver.log("timeout");
 				cmParam.state = STATE_CHANNEL_CLOSED;
 				unbind(channel);
 				throw new ChannelTimeoutException("Time limit reached");
@@ -260,7 +302,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 				
 				writePacket(channel, bufferSize, FLAG_SYN);
 				cmParam.state = STATE_ACCEPTED;
-				log("accepted");
+				//MuxDriver.log("accepted");
 				return cm;
 			} finally {
 				signal(segregator.signal);
@@ -270,6 +312,71 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		
 	}
 	
+	
+	public boolean isClosed() {
+		return closed==MULTIPLEXER_CLOSED;
+	}
+	
+	// TODO close
+	@Override
+	public void close() throws IOException {close(DEFAULT_CLOSE_TIMEOUT);}
+	public void close(long timeout) throws IOException {
+		if (timeout<0) throw new IllegalArgumentException("timeout cannot be negative");
+		timeout = timeout==0?Long.MAX_VALUE:timeout;
+		synchronized(fieldLock) {
+			while (closed==MULTIPLEXER_CLOSING) {
+				//MuxDriver.log("Another thread is closing going to wait");
+				try{fieldLock.wait(100);}catch(InterruptedException e){Thread.currentThread().interrupt();}
+			}
+			try {
+				if (closed==MULTIPLEXER_CLOSED) return;
+				closed = MULTIPLEXER_CLOSING;
+				
+				//MuxDriver.log("closing");
+				
+				IOException ioe = null;
+				try {
+					writePacket(0, 0, FLAG_MCL);
+					//MuxDriver.log("waiting for close reply");
+					await(remoteClosed, timeout);
+				} catch(IOException e) {
+					ioe=e;
+				}
+				
+				try{Thread.sleep(50);}catch(InterruptedException ie){Thread.currentThread().interrupt();}
+				
+				try{input.close();}catch(IOException e){if(ioe==null)ioe=e;else ioe.addSuppressed(e);}
+				try{output.close();}catch(IOException e){if(ioe==null)ioe=e;else ioe.addSuppressed(e);}
+				if (ioe!=null) throw ioe;
+			} finally {
+				//MuxDriver.log("Multiplexer Closed");
+				closed = MULTIPLEXER_CLOSED;
+				fieldLock.notifyAll();
+			}
+		}
+	}
+	
+	/**
+	 * This function is called if something goes wrong with the underlying
+	 * Input and Output streams.
+	 */
+	private void closeQuietly() {
+		synchronized(fieldLock) {
+			try {
+				if (closed==MULTIPLEXER_CLOSED) return;
+				closed = MULTIPLEXER_CLOSING;
+				
+				try{input.close();}catch(IOException e){}
+				try{output.close();}catch(IOException e){}
+			} finally {
+				closed = MULTIPLEXER_CLOSED;
+				remoteClosed.set(true);
+				fieldLock.notifyAll();
+			}
+		}
+	}
+	
+	// TODO note: packet switching class
 	class Demultiplexer implements Runnable {
 
 		final Multiplexer home;
@@ -314,7 +421,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 
 						if ((flags&FLAG_MCL)!=0) {
 							signal(remoteClosed);
-							home.close(DEBUG?0:DEFAULT_CLOSE_TIMEOUT);
+							home.close(DEFAULT_CLOSE_TIMEOUT);
 							break;
 						}
 						
@@ -372,7 +479,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 
 							break;
 						default:
-							if (DEBUG) System.err.println("unkown flag combination");
+							assert(false);
 							break;
 						}
 						if (len>0) {
@@ -389,65 +496,8 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		}
 	}
 
-	public boolean isClosed() {
-		return closed==MULTIPLEXER_CLOSED;
-	}
 	
-	// TODO close
-	@Override
-	public void close() throws IOException {close(DEFAULT_CLOSE_TIMEOUT);}
-	public void close(long timeout) throws IOException {
-		if (timeout<0) throw new IllegalArgumentException("timeout cannot be negative");
-		timeout = timeout==0?Long.MAX_VALUE:timeout;
-		synchronized(fieldLock) {
-			while (closed==MULTIPLEXER_CLOSING) {
-				MuxDriver.log("Another thread is closing going to wait");
-				try{fieldLock.wait(100);}catch(InterruptedException e){Thread.currentThread().interrupt();}
-			}
-			try {
-				if (closed==MULTIPLEXER_CLOSED) return;
-				closed = MULTIPLEXER_CLOSING;
-				
-				log("closing");
-				
-				IOException ioe = null;
-				try {
-					writePacket(0, 0, FLAG_MCL);
-					log("waiting for close reply");
-					await(remoteClosed, timeout);
-				} catch(IOException e) {
-					ioe=e;
-				}
-				
-				try{Thread.sleep(50);}catch(InterruptedException ie){Thread.currentThread().interrupt();}
-				
-				try{input.close();}catch(IOException e){if(ioe==null)ioe=e;else ioe.addSuppressed(e);}
-				try{output.close();}catch(IOException e){if(ioe==null)ioe=e;else ioe.addSuppressed(e);}
-				if (ioe!=null) throw ioe;
-			} finally {
-				MuxDriver.log("Multiplexer Closed");
-				closed = MULTIPLEXER_CLOSED;
-				fieldLock.notifyAll();
-			}
-		}
-	}
-
-	private void closeQuietly() {
-		synchronized(fieldLock) {
-			try {
-				if (closed==MULTIPLEXER_CLOSED) return;
-				closed = MULTIPLEXER_CLOSING;
-				
-				try{input.close();}catch(IOException e){if(DEBUG)e.printStackTrace();}
-				try{output.close();}catch(IOException e){if(DEBUG)e.printStackTrace();}
-			} finally {
-				closed = MULTIPLEXER_CLOSED;
-				remoteClosed.set(true);
-				fieldLock.notifyAll();
-			}
-		}
-	}
-	
+	// TODO note: flowchar/fsm to communicate the state of a channel between threads.
 	private static int i = 0;
 	static final long STATE_UNBOUND = (1<<i++);
 	static final long STATE_BOUND = (1<<i++);
@@ -518,27 +568,4 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	long await(AtomicBoolean ab) {
 		return await(ab, Long.MAX_VALUE);
 	}
-	
-	// read/write numbers
-	private static long bytesToNumber(byte[] num, int off, int len) {
-		if (off+len > num.length) throw new IndexOutOfBoundsException("byte array len="+num.length+" off="+off+" len="+len);
-		if (len < 1 || len > 8) throw new IndexOutOfBoundsException("Improper length "+len);
-		long out = 0;
-		for (int i=0; i<len; i++) {
-			out += num[off+i]&0xFF;
-			if (i<len-1) out <<= 8;
-		}
-		return out;
-	}
-
-	private static void numberToBytes(long num, byte[] b, int off, int len) {
-		if (off+len > b.length) throw new IndexOutOfBoundsException("byte array len="+b.length+" off="+off+" len="+len);
-		if (len < 1 || len > 8) throw new IndexOutOfBoundsException("Improper length "+len);
-		for (int i=0; i<len; i++) {
-			b[off+i] = (byte) ((num>>>(len-1-i)*8)&0xFF);
-		}
-	}
-
-	
-
 }

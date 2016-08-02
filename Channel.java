@@ -6,12 +6,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-//import io.ByteArrayCircularBuffer;
-//import static net.multiplexer.Multiplexer.*;
-
 public class Channel implements Closeable {
 
-	private static final int DEFAULT_CLOSE_TIMEOUT = MuxDriver.DEBUG?Integer.MAX_VALUE:3000;
+	private static final int DEFAULT_CLOSE_TIMEOUT = 3000;
 
 	final Multiplexer home;
 	final int channel;
@@ -27,7 +24,7 @@ public class Channel implements Closeable {
 	boolean remoteInputClosed = false;
 	boolean remoteOutputClosed = false;
 
-	public Channel(Multiplexer inst, int channel, int recvBufferSize, int sendBufferSize) {
+	Channel(Multiplexer inst, int channel, int recvBufferSize, int sendBufferSize) {
 		this.home = inst;
 		this.channel = channel;
 		fieldLock = home.fieldLock;
@@ -96,7 +93,7 @@ public class Channel implements Closeable {
 			if (read<0) return read;
 			updateProcessed(read);
 			flushProc();
-			MuxDriver.log("reading data");
+			//MuxDriver.log("reading data");
 			return read;
 		}
 
@@ -193,7 +190,7 @@ public class Channel implements Closeable {
 				decWriteable(write);
 				total += write;
 			}
-			MuxDriver.log("writing data");
+			//MuxDriver.log("writing data");
 		}
 
 		private void decWriteable(int amount) {
