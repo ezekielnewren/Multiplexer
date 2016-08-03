@@ -38,6 +38,7 @@ public class ByteArrayCircularBuffer {
 
 	public ByteArrayCircularBuffer(byte[] reusableByteArray) {
 		if (reusableByteArray==null) throw new NullPointerException();
+		if (reusableByteArray.length==0) throw new IllegalArgumentException("CircularBuffer must be at least one byte");
 		cbuff = reusableByteArray;
 		is = new CircularBufferInputStream();
 		os = new CircularBufferOutputStream();
