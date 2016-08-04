@@ -18,10 +18,8 @@ public class Channel implements Closeable {
 	final ChannelInputStream input;
 	final ChannelOutputStream output;
 
-	private final Object closeLock = new Object();
 	boolean localInputClosed = false;
 	boolean localOutputClosed = false;
-	boolean remoteInputClosed = false;
 	boolean remoteOutputClosed = false;
 
 	Channel(Multiplexer inst, int channel, int recvBufferSize, int sendBufferSize) {
@@ -40,18 +38,24 @@ public class Channel implements Closeable {
 		}
 	}
 
+	public boolean isClosed() {
+		synchronized(fieldLock) {
+			return localInputClosed&&localOutputClosed;
+		}
+	}
+	
 	public int getChannelNumber() throws IOException {
-		if (isConnectionClosed()) throw new IOException("Channel closed");
+		if (isClosed()) throw new IOException("Channel closed");
 		return channel;
 	}
 
 	public InputStream getInputStream() throws IOException {
-		if (isConnectionClosed()) throw new IOException("Channel closed");
+		if (isClosed()) throw new IOException("Channel closed");
 		return input;
 	}
 
 	public OutputStream getOutputStream() throws IOException {
-		if (isConnectionClosed()) throw new IOException("Channel closed");
+		if (isClosed()) throw new IOException("Channel closed");
 		return output;
 	}
 
@@ -123,31 +127,29 @@ public class Channel implements Closeable {
 			}
 		}
 
+		void closeQuietly() {
+			localInputClosed = true;
+		}
+		
 		@Override
 		public void close() throws IOException {
-			close(true);
-		}
+			synchronized(fieldLock) {
+				if (localInputClosed) return;
 
-		void close(boolean tellTheOtherSide) throws IOException {
-			synchronized(closeLock) {
-				synchronized(fieldLock) {
-					if (localInputClosed) return;
-					localInputClosed = true;
-	
-					try {
-						cmParam.state = Multiplexer.STATE_INPUT_CLOSING;
-					
-						if (tellTheOtherSide&&!remoteOutputClosed) {
-							home.writePacket(channel, clearProcessed(), Multiplexer.FLAG_ICL);
-							home.await(signal, DEFAULT_CLOSE_TIMEOUT);
-						}
-					
-						cbuff.closeInput();
-						if (isConnectionClosed()) home.unbind(channel);
-					} finally {
-						cmParam.state = Multiplexer.STATE_INPUT_CLOSED;
-						home.signal(home.segregator.signal);
+				try {
+					cmParam.state = Multiplexer.STATE_INPUT_CLOSING;
+				
+					if (!remoteOutputClosed) {
+						home.writePacket(channel, clearProcessed(), Multiplexer.FLAG_ICL);
+						home.await(signal, DEFAULT_CLOSE_TIMEOUT);
 					}
+				
+					cbuff.closeInput();
+					if (isConnectionClosed()) home.unbind(channel);
+					cmParam.state = Multiplexer.STATE_INPUT_CLOSED;
+				} finally {
+					localInputClosed = true;
+					home.signal(home.segregator.signal);
 				}
 			}
 		}
@@ -209,69 +211,73 @@ public class Channel implements Closeable {
 			fieldLock.notifyAll();
 		}
 
+		void closeQuietly() {
+			localOutputClosed = true;
+		}
+		
 		@Override
 		public void close() throws IOException {
-			close(true);
-		}
+			synchronized(fieldLock) {
+				if (localOutputClosed) return;
 
-		void close(boolean tellTheOtherSide) throws IOException {
-			synchronized(closeLock) {
-				synchronized(fieldLock) {
-					if (localOutputClosed) return;
-					localOutputClosed = true;
-
-					try {
-						cmParam.state = Multiplexer.STATE_OUTPUT_CLOSING;
-						
-						home.writePacket(channel, input.clearProcessed(), Multiplexer.FLAG_OCL);
-						if (isConnectionClosed()) {
-							cmParam.state = Multiplexer.STATE_CHANNEL_CLOSED;
-							home.unbind(channel);
-						}
-					} finally {
-						cmParam.state = Multiplexer.STATE_OUTPUT_CLOSED;
-						home.signal(signal);
-					}
+				try {
+					cmParam.state = Multiplexer.STATE_OUTPUT_CLOSING;
 					
+					home.writePacket(channel, input.clearProcessed(), Multiplexer.FLAG_OCL);
+					if (isConnectionClosed()) {
+						cmParam.state = Multiplexer.STATE_CHANNEL_CLOSED;
+						home.unbind(channel);
+					}
+					cmParam.state = Multiplexer.STATE_OUTPUT_CLOSED;
+				} finally {
+					localOutputClosed = true;
+					home.signal(signal);
 				}
+				
 			}
 		}
 	}
 
 	@Override
 	public void close() throws IOException {
-		close(true);
-	}
-
-	void close(boolean tellTheOtherSide) throws IOException {
-		synchronized(closeLock) {
-			synchronized(fieldLock) {
-				if (isConnectionClosed()) return;
+		synchronized(fieldLock) {
+			if (isConnectionClosed()) return;
+			
+			try {
 				
-				try {
-					
-					if (!localInputClosed&&!localOutputClosed) {
-						input.close(false);
-						output.close(false);
-						if (tellTheOtherSide) home.writePacket(channel, input.clearProcessed(), Multiplexer.FLAG_IOCL);
-					} else if (!localInputClosed^!localOutputClosed) {
-						input.close(tellTheOtherSide);
-						output.close(tellTheOtherSide);
-					}
-		
-					if (!remoteOutputClosed&&home.await(signal, DEFAULT_CLOSE_TIMEOUT)>DEFAULT_CLOSE_TIMEOUT) {
-						throw new IOException("close timeout other side may not be closed");
-					}
-					
-					cmParam.state = Multiplexer.STATE_CHANNEL_CLOSED;
-					home.unbind(channel);
-				} finally {
-					cmParam.state = Multiplexer.STATE_CHANNEL_CLOSED;
-					home.signal(signal);
+				if (!localInputClosed&&!localOutputClosed) {
+					input.close();
+					output.close();
+					home.writePacket(channel, input.clearProcessed(), Multiplexer.FLAG_IOCL);
+				} else if (!localInputClosed^!localOutputClosed) {
+					input.close();
+					output.close();
 				}
+	
+				if (!remoteOutputClosed&&home.await(signal, DEFAULT_CLOSE_TIMEOUT)>DEFAULT_CLOSE_TIMEOUT) {
+					throw new IOException("close timeout other side may not be closed");
+				}
+				
+				cmParam.state = Multiplexer.STATE_CHANNEL_CLOSED;
+				home.unbind(channel);
+			} finally {
+				cmParam.state = Multiplexer.STATE_CHANNEL_CLOSED;
+				home.signal(signal);
 			}
 		}
 	}
+	
+	void closeQuietly() {
+		synchronized(fieldLock) {
+			if (localInputClosed&&localOutputClosed&&remoteOutputClosed) return;
+			localInputClosed = true;
+			localOutputClosed = true;
+			remoteOutputClosed = true;
+			cmParam.state = Multiplexer.STATE_CHANNEL_CLOSED;
+			fieldLock.notifyAll();
+		}
+	}
+	
 }
 
 

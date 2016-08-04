@@ -167,7 +167,6 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	void bind(int channel, boolean recurring) throws IOException {
 		synchronized(fieldLock) {
 			ChannelParameter cmParam = getCP(channel);
-			legal(channel, STATE_UNBOUND|STATE_BOUND|STATE_CONNECTING|STATE_ACCEPTING);
 			
 			if (isBound(channel)) throw new ChannelBindException("Channel in use");
 			cmParam.recurring = recurring;
@@ -186,7 +185,6 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		ChannelParameter.validChannel(channel);
 		synchronized(fieldLock) {
 			ChannelParameter cmParam = getCP(channel);
-			legal(channel, STATE_CHANNEL_CLOSED|STATE_UNBOUND);
 			
 			cmParam.channel = null;
 			cmParam.reset = false;
@@ -206,7 +204,6 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		//ChannelParameter.validChannel(channel);
 		synchronized(fieldLock) {
 			ChannelParameter cmParam = getCP(channel);
-			legal(channel, STATE_UNBOUND|STATE_PRE_PASV_OPEN|STATE_ACCEPTING);
 			
 			if ((cmParam.state&(STATE_ACCEPTING|STATE_ACCEPTED))!=0) throw new ChannelListenException("Cannot listen on the same channel twice");
 			if (cmParam.state!=STATE_PRE_PASV_OPEN) bind(channel, recurring);
@@ -226,7 +223,6 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 			//MuxDriver.log("connecting");
 			
 			ChannelParameter cmParam = getCP(channel);
-			legal(channel, STATE_UNBOUND|STATE_CONNECTING);
 			
 			// bind
 			bind(channel, false);
@@ -238,7 +234,6 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 				//MuxDriver.log("timeout");
 				cmParam.state = STATE_CHANNEL_CLOSED;
 				unbind(channel);
-				legal(channel, STATE_UNBOUND);
 				throw new ChannelTimeoutException("Channel timed out");
 			}
 			
@@ -247,10 +242,9 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 				if (cmParam.reset) {
 					cmParam.state = STATE_CHANNEL_CLOSED;
 					unbind(channel);
-					legal(channel, STATE_UNBOUND);
 					throw new ChannelResetException("Connection refused");
 				}
-				Channel cm = (cmParam.channel=new Channel(home, channel, cmParam.recv, cmParam.send));
+				Channel cm = (cmParam.channel=new Channel(home, channel, bufferSize, cmParam.send));
 				cmParam.state = STATE_ESTABLISHED;
 				//MuxDriver.log("connected");
 				return cm;
@@ -277,7 +271,6 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 			//MuxDriver.log("accepting");
 			
 			ChannelParameter cmParam = getCP(channel);
-			legal(channel, STATE_UNBOUND|STATE_PRE_PASV_OPEN|STATE_ACCEPTING);
 			
 			// bind
 			listen(channel, recurring);
@@ -295,10 +288,9 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 				if (cmParam.reset) {
 					cmParam.state = STATE_CHANNEL_CLOSED;
 					unbind(channel);
-					legal(channel, STATE_UNBOUND);
 					throw new ChannelResetException("Channel reset");
 				}
-				Channel cm = (cmParam.channel=new Channel(home, channel, cmParam.recv, cmParam.send));
+				Channel cm = (cmParam.channel=new Channel(home, channel, bufferSize, cmParam.send));
 				
 				writePacket(channel, bufferSize, FLAG_SYN);
 				cmParam.state = STATE_ACCEPTED;
@@ -434,46 +426,39 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 						case 0: break;
 						case FLAG_SYN|FLAG_CLI:
 						case FLAG_SYN:
-							if ( ((flags&FLAG_CLI)!=0&&(cmParam.state&STATE_CONNECTING)!=0) ||
-									((flags&FLAG_CLI)==0&&(cmParam.state&STATE_ACCEPTING)!=0) ) {
-								writePacket(channel, 0, FLAG_RST);
-								continue;
-							}
-							cmParam.send = proc;
-							if ((cmParam.state&(STATE_CONNECTING|STATE_ACCEPTING))!=0) {
-								signal(cmParam.signal);
-								await(this.signal);
-							}
+//							if ( ((flags&FLAG_CLI)!=0&&(cmParam.state&STATE_CONNECTING)!=0) ||
+//									((flags&FLAG_CLI)==0&&(cmParam.state&STATE_ACCEPTING)!=0) ) {
+//								writePacket(channel, 0, FLAG_RST);
+//								continue;
+//							}
+//							cmParam.send = proc;
+//							if ((cmParam.state&(STATE_CONNECTING|STATE_ACCEPTING))!=0) {
+//								signal(cmParam.signal);
+//								await(this.signal);
+//							}
 							continue;
 							
 						case FLAG_RST:
-							cmParam.reset = true;
-							if ((cmParam.state&(STATE_CONNECTING|STATE_ACCEPTING))!=0) {
-								signal(cmParam.signal);
-								await(this.signal);
-							} else if ((cmParam.state&(STATE_ESTABLISHED))!=0) {
-								cm.close(false);
-							}
+//							cmParam.reset = true;
+//							if ((cmParam.state&(STATE_CONNECTING|STATE_ACCEPTING))!=0) {
+//								signal(cmParam.signal);
+//								await(this.signal);
+//							} else if ((cmParam.state&(STATE_ESTABLISHED))!=0) {
+//								cm.closeQuietly();
+//							}
 							continue;
 						case FLAG_OCL:
-							cm.input.setEOF();
-							cm.fieldLock.notifyAll();
-							if (cm.localInputClosed) 
+//							cm.input.setEOF();
+//							cm.fieldLock.notifyAll();
+//							if (cm.localInputClosed) 
 							break;
 						case FLAG_ICL:
-							synchronized(fieldLock) {
-								cm.remoteInputClosed = true;
-								cm.output.close(false);
-								cm.fieldLock.notifyAll();
-							}
+							cm.output.close();
 						case (FLAG_ICL|FLAG_OCL):
-							synchronized(fieldLock) {
-								cm.remoteInputClosed = true;
-								cm.remoteOutputClosed = true;
-								cm.close(false);
-								signal(cmParam.signal);
-								cm.fieldLock.notifyAll();
-							}
+//							cm.remoteOutputClosed = true;
+//							cm.close(false);
+//							signal(cmParam.signal);
+//							cm.fieldLock.notifyAll();
 							break;
 						case FLAG_KAL:
 
@@ -519,9 +504,9 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		return cp[channel];
 	}
 	
-	private void legal(int channel, long legalStates) {
-		assert((getCP(channel).state&(legalStates))!=0);
-	}
+//	private void legal(int channel, long legalStates) {
+//		assert((getCP(channel).state&(legalStates))!=0);
+//	}
 	
 	static class ChannelParameter {
 
@@ -533,7 +518,6 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		boolean reset;
 
 		long state = STATE_UNBOUND;
-		int recv;
 		int send;
 		
 		static void validChannel(int channel) {
