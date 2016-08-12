@@ -27,7 +27,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	private volatile int closed = MULTIPLEXER_OPEN;
 
 	final Demultiplexer segregator;
-	final Object fieldLock = this;
+	final Object mutex = this;
 	
 	static final int FLAG_NULL = 0x0;
 	static final int FLAG_SYN = 0x1;
@@ -121,7 +121,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		}
 		if (flags>0xff) throw new IllegalArgumentException();
 		if (isClosed()) throw new IOException("Multiplexer Closed");
-		synchronized(fieldLock) {
+		synchronized(mutex) {
 			// 2B_len, 2B_channel, 3B_proc, 1B_flags, ...B_payload, 4B_crc
 
 			// header
@@ -149,7 +149,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	}
 
 	void writePacketWithOneByte(int channel, int processed, int byteValue) throws IOException {
-		synchronized(fieldLock) {
+		synchronized(mutex) {
 			sendBuffer[12] = (byte) byteValue;
 			writePacket(channel, processed, sendBuffer, 12, 1, FLAG_NULL);
 		}
@@ -165,7 +165,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	 * @throws IOException
 	 */
 	void bind(int channel, boolean recurring) throws IOException {
-		synchronized(fieldLock) {
+		synchronized(mutex) {
 			ChannelParameter cmParam = getCP(channel);
 			
 			if (isBound(channel)) throw new ChannelBindException("Channel in use");
@@ -176,15 +176,17 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	}
 
 	boolean isBound(int channel) {
-		synchronized(fieldLock) {
+		synchronized(mutex) {
 			return channelBound.get(channel);
 		}
 	}
 
 	void unbind(int channel) throws IOException {
 		ChannelParameter.validChannel(channel);
-		synchronized(fieldLock) {
+		synchronized(mutex) {
 			ChannelParameter cmParam = getCP(channel);
+			
+			assert(cmParam.state==STATE_CHANNEL_CLOSED);
 			
 			cmParam.channel = null;
 			cmParam.reset = false;
@@ -202,7 +204,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	 */
 	void listen(int channel, boolean recurring) throws IOException {
 		//ChannelParameter.validChannel(channel);
-		synchronized(fieldLock) {
+		synchronized(mutex) {
 			ChannelParameter cmParam = getCP(channel);
 			
 			if ((cmParam.state&(STATE_ACCEPTING|STATE_ACCEPTED))!=0) throw new ChannelListenException("Cannot listen on the same channel twice");
@@ -218,7 +220,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		ChannelParameter.valid(channel, bufferSize);
 		if (timeout<0) throw new IllegalArgumentException(timeout+"");
 		if (isClosed()) throw new IOException("Multiplexer Closed");
-		synchronized(fieldLock) {
+		synchronized(mutex) {
 			// get parameters for channel
 			//MuxDriver.log("connecting");
 			
@@ -231,7 +233,6 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 			// request connection and wait for the response
 			writePacket(channel, bufferSize, FLAG_SYN|FLAG_CLI);
 			if (await(cmParam.signal, timeout)>timeout) {
-				//MuxDriver.log("timeout");
 				cmParam.state = STATE_CHANNEL_CLOSED;
 				unbind(channel);
 				throw new ChannelTimeoutException("Channel timed out");
@@ -266,7 +267,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		ChannelParameter.valid(channel, bufferSize);
 		if (timeout<0) throw new IllegalArgumentException(timeout+"");
 		if (isClosed()) throw new IOException("Multiplexer Closed");
-		synchronized(fieldLock) {
+		synchronized(mutex) {
 			// get parameters for channel
 			//MuxDriver.log("accepting");
 			
@@ -315,10 +316,10 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	public void close(long timeout) throws IOException {
 		if (timeout<0) throw new IllegalArgumentException("timeout cannot be negative");
 		timeout = timeout==0?Long.MAX_VALUE:timeout;
-		synchronized(fieldLock) {
+		synchronized(mutex) {
 			while (closed==MULTIPLEXER_CLOSING) {
 				//MuxDriver.log("Another thread is closing going to wait");
-				try{fieldLock.wait(100);}catch(InterruptedException e){Thread.currentThread().interrupt();}
+				try{mutex.wait(100);}catch(InterruptedException e){Thread.currentThread().interrupt();}
 			}
 			try {
 				if (closed==MULTIPLEXER_CLOSED) return;
@@ -343,7 +344,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 			} finally {
 				//MuxDriver.log("Multiplexer Closed");
 				closed = MULTIPLEXER_CLOSED;
-				fieldLock.notifyAll();
+				mutex.notifyAll();
 			}
 		}
 	}
@@ -353,7 +354,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	 * Input and Output streams.
 	 */
 	private void closeQuietly() {
-		synchronized(fieldLock) {
+		synchronized(mutex) {
 			try {
 				if (closed==MULTIPLEXER_CLOSED) return;
 				closed = MULTIPLEXER_CLOSING;
@@ -363,7 +364,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 			} finally {
 				closed = MULTIPLEXER_CLOSED;
 				remoteClosed.set(true);
-				fieldLock.notifyAll();
+				mutex.notifyAll();
 			}
 		}
 	}
@@ -407,7 +408,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 					if (packetCRC!=realCRC) throw new IOException("Malformed packet");
 
 					// process packet
-					synchronized(fieldLock) {
+					synchronized(mutex) {
 						ChannelParameter cmParam = getCP(channel);
 						Channel cm = cmParam.channel;
 
@@ -537,14 +538,14 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 
 	void signal(AtomicBoolean ab) {
 		ab.set(true);
-		fieldLock.notifyAll();
+		mutex.notifyAll();
 	}
 	
 	long await(AtomicBoolean ab, long millis) {
 		millis = (millis==0?millis=Long.MAX_VALUE:millis);
 		long beg=System.nanoTime(),time;
 		while ((time=(System.nanoTime()-beg)/1000000)<millis&&!ab.compareAndSet(true, false)) {
-			try{fieldLock.wait(millis);}catch(InterruptedException e){Thread.currentThread().interrupt();}
+			try{mutex.wait(millis);}catch(InterruptedException e){Thread.currentThread().interrupt();}
 		}
 		return time;
 	}

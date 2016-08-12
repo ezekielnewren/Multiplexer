@@ -12,7 +12,7 @@ public class Channel implements Closeable {
 
 	final Multiplexer home;
 	final int channel;
-	final Object fieldLock;
+	final Object mutex;
 	final Multiplexer.ChannelParameter cmParam;
 	final AtomicBoolean signal;
 	final ChannelInputStream input;
@@ -25,7 +25,7 @@ public class Channel implements Closeable {
 	Channel(Multiplexer inst, int channel, int recvBufferSize, int sendBufferSize) {
 		this.home = inst;
 		this.channel = channel;
-		fieldLock = home.fieldLock;
+		mutex = home.mutex;
 		cmParam = home.getCP(channel);
 		signal = cmParam.signal;
 		input = new ChannelInputStream(recvBufferSize);
@@ -33,13 +33,13 @@ public class Channel implements Closeable {
 	}
 
 	public boolean isConnectionClosed() {
-		synchronized(fieldLock) {
+		synchronized(mutex) {
 			return localOutputClosed&&remoteOutputClosed;
 		}
 	}
 
 	public boolean isClosed() {
-		synchronized(fieldLock) {
+		synchronized(mutex) {
 			return localInputClosed&&localOutputClosed;
 		}
 	}
@@ -111,19 +111,19 @@ public class Channel implements Closeable {
 		}
 		
 		int clearProcessed() {
-			synchronized(fieldLock) {
+			synchronized(mutex) {
 				int x = proc;
 				proc = 0;
-				fieldLock.notifyAll();
+				mutex.notifyAll();
 				return x;
 			}
 		}
 
 		void updateProcessed(int amount) {
-			synchronized(fieldLock) {
+			synchronized(mutex) {
 				assert(0<=amount&&proc+amount<=cbuff.getBufferSize());
 				proc += amount;
-				fieldLock.notifyAll();
+				mutex.notifyAll();
 			}
 		}
 
@@ -133,7 +133,7 @@ public class Channel implements Closeable {
 		
 		@Override
 		public void close() throws IOException {
-			synchronized(fieldLock) {
+			synchronized(mutex) {
 				if (localInputClosed) return;
 
 				try {
@@ -181,9 +181,9 @@ public class Channel implements Closeable {
 			int total = 0;
 			while (total<len) {
 				int write;
-				synchronized(fieldLock) {
+				synchronized(mutex) {
 					while ((write=Math.min(writeable, Math.min(0xffff, len-total)))==0&&!localOutputClosed) {
-						try{fieldLock.wait();}catch(InterruptedException ie){Thread.currentThread().interrupt();}
+						try{mutex.wait();}catch(InterruptedException ie){Thread.currentThread().interrupt();}
 					}
 					if (localOutputClosed) throw new IOException("Stream Closed");
 				}
@@ -197,10 +197,10 @@ public class Channel implements Closeable {
 
 		private void decWriteable(int amount) {
 			assert(amount>=0);
-			synchronized(fieldLock) {
+			synchronized(mutex) {
 				assert(writeable-amount>=0);
 				writeable -= amount;
-				fieldLock.notifyAll();
+				mutex.notifyAll();
 			}
 		}
 
@@ -208,7 +208,7 @@ public class Channel implements Closeable {
 			assert(amount>=0);
 			assert(writeable+amount<=sendBufferSize);
 			writeable += amount;
-			fieldLock.notifyAll();
+			mutex.notifyAll();
 		}
 
 		void closeQuietly() {
@@ -217,7 +217,7 @@ public class Channel implements Closeable {
 		
 		@Override
 		public void close() throws IOException {
-			synchronized(fieldLock) {
+			synchronized(mutex) {
 				if (localOutputClosed) return;
 
 				try {
@@ -240,7 +240,7 @@ public class Channel implements Closeable {
 
 	@Override
 	public void close() throws IOException {
-		synchronized(fieldLock) {
+		synchronized(mutex) {
 			if (isConnectionClosed()) return;
 			
 			try {
@@ -268,13 +268,13 @@ public class Channel implements Closeable {
 	}
 	
 	void closeQuietly() {
-		synchronized(fieldLock) {
+		synchronized(mutex) {
 			if (localInputClosed&&localOutputClosed&&remoteOutputClosed) return;
 			localInputClosed = true;
 			localOutputClosed = true;
 			remoteOutputClosed = true;
 			cmParam.state = Multiplexer.STATE_CHANNEL_CLOSED;
-			fieldLock.notifyAll();
+			mutex.notifyAll();
 		}
 	}
 	
