@@ -186,7 +186,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		synchronized(mutex) {
 			ChannelParameter cmParam = getCP(channel);
 			
-			assert(cmParam.state==STATE_CHANNEL_CLOSED);
+			assert((cmParam.state&(STATE_ACCEPTING|STATE_CONNECTING|STATE_CHANNEL_CLOSED))!=0);
 			
 			cmParam.channel = null;
 			cmParam.reset = false;
@@ -233,7 +233,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 			// request connection and wait for the response
 			writePacket(channel, bufferSize, FLAG_SYN|FLAG_CLI);
 			if (await(cmParam.signal, timeout)>timeout) {
-				cmParam.state = STATE_CHANNEL_CLOSED;
+				//cmParam.state = STATE_CHANNEL_CLOSED; // legal because the channel doesn't exist yet
 				unbind(channel);
 				throw new ChannelTimeoutException("Channel timed out");
 			}
@@ -241,7 +241,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 			try {
 				// act on data provided from the Demultiplexer
 				if (cmParam.reset) {
-					cmParam.state = STATE_CHANNEL_CLOSED;
+					//cmParam.state = STATE_CHANNEL_CLOSED; // legal because the channel doesn't exist yet
 					unbind(channel);
 					throw new ChannelResetException("Connection refused");
 				}
@@ -272,6 +272,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 			//MuxDriver.log("accepting");
 			
 			ChannelParameter cmParam = getCP(channel);
+			assert(cmParam!=null);
 			
 			// bind
 			listen(channel, recurring);
@@ -280,14 +281,14 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 			
 			if (cmParam.send==0&&await(cmParam.signal, DEFAULT_CONNECTION_TIMEOUT)>timeout) {
 				//MuxDriver.log("timeout");
-				cmParam.state = STATE_CHANNEL_CLOSED;
+				//cmParam.state = STATE_CHANNEL_CLOSED; // legal because the channel doesn't exist yet
 				unbind(channel);
 				throw new ChannelTimeoutException("Time limit reached");
 			}
 			
 			try {
 				if (cmParam.reset) {
-					cmParam.state = STATE_CHANNEL_CLOSED;
+					//cmParam.state = STATE_CHANNEL_CLOSED; // legal because the channel doesn't exist yet
 					unbind(channel);
 					throw new ChannelResetException("Channel reset");
 				}
@@ -499,10 +500,6 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	ChannelParameter getCP(int channel) {
 		return cp[channel];
 	}
-	
-//	private void legal(int channel, long legalStates) {
-//		assert((getCP(channel).state&(legalStates))!=0);
-//	}
 	
 	static class ChannelParameter {
 

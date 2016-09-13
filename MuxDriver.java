@@ -1,7 +1,11 @@
 package com.github.ezekielnewren.net.multiplexer;
 
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.util.Iterator;
 import java.util.LinkedList;
 
@@ -10,6 +14,11 @@ public class MuxDriver {
 	private static final long TIMEOUT = Long.MAX_VALUE;
 
 	public static void main(String[] args) throws Exception {
+		simple();
+		
+	}
+	
+	public static void complex() throws Exception {
 		LinkedList<Thread> tlist = new LinkedList<Thread>();
 		
 		ByteArrayCircularBuffer near = new ByteArrayCircularBuffer(600);
@@ -90,8 +99,71 @@ public class MuxDriver {
 		while (it.hasNext()) {
 			it.next().join();
 		}
+	}
+	
+	public static void simple() throws Exception {
+		String ip = "localhost";
+		int port = 8888;
+		ServerSocket ss = new ServerSocket(port);
+		final Socket client = new Socket(ip, port);
+		final Socket server = ss.accept();
+
+		final int channel = 17;
+		final int bufferSize = 23;
+		
+		
+		new Thread(new Runnable() {
+			public void run() {
+				try {
+					ClientMultiplexer m = new Multiplexer(client.getInputStream(), client.getOutputStream());
+					
+					Channel cm = m.connect(channel, bufferSize);
+					
+					DataInputStream in = new DataInputStream(cm.getInputStream());
+					DataOutputStream out = new DataOutputStream(cm.getOutputStream());
+					
+					String original = "hello world";
+					
+					out.writeUTF(original);
+					String deserialized = in.readUTF();
+					
+					System.out.println(original+"=="+deserialized+(original.equals(deserialized)));
+					
+					cm.close();
+					
+					m.close();
+					
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+		}).start();
+		
+		new Thread(new Runnable() {
+			public void run() {
+				try {
+					ServerMultiplexer m = new Multiplexer(server.getInputStream(), server.getOutputStream(), channel);
+					
+					Channel cm = m.accept(channel, bufferSize);
+					
+					DataInputStream in = new DataInputStream(cm.getInputStream());
+					DataOutputStream out = new DataOutputStream(cm.getOutputStream());
+					
+					String data = in.readUTF();
+					out.writeUTF(data);
+					
+					cm.close();
+					
+					m.close();
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+		}).start();
+		
 		
 	}
+	
 	
 	static abstract class Actor implements Runnable {
 
@@ -144,4 +216,6 @@ public class MuxDriver {
 		return "STATE_UNKNOWN";
 	}
 
+	
+	
 }

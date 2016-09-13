@@ -8,6 +8,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Channel implements Closeable {
 
+	private long state;
 	private static final int DEFAULT_CLOSE_TIMEOUT = 3000;
 
 	final Multiplexer home;
@@ -30,6 +31,7 @@ public class Channel implements Closeable {
 		signal = cmParam.signal;
 		input = new ChannelInputStream(recvBufferSize);
 		output = new ChannelOutputStream(sendBufferSize);
+		state = Multiplexer.STATE_ESTABLISHED;
 	}
 
 	public boolean isConnectionClosed() {
@@ -134,10 +136,13 @@ public class Channel implements Closeable {
 		@Override
 		public void close() throws IOException {
 			synchronized(mutex) {
+				while (state==Multiplexer.STATE_CHANNEL_IN_CLOSING_FUNCTION) {
+					try{mutex.wait();}catch(InterruptedException ie){Thread.currentThread().interrupt();}
+				}
 				if (localInputClosed) return;
-
+				
 				try {
-					cmParam.state = Multiplexer.STATE_CHANNEL_IN_CLOSING_FUNCTION;
+					setState(Multiplexer.STATE_CHANNEL_IN_CLOSING_FUNCTION);
 				
 					if (!remoteOutputClosed) {
 						home.writePacket(channel, clearProcessed(), Multiplexer.FLAG_ICL);
@@ -146,7 +151,11 @@ public class Channel implements Closeable {
 				
 					cbuff.closeInput();
 					if (isConnectionClosed()) home.unbind(channel);
-					cmParam.state = Multiplexer.STATE_INPUT_CLOSED;
+					if (localOutputClosed) {
+						setState(Multiplexer.STATE_CHANNEL_CLOSED);
+					} else {
+						setState(Multiplexer.STATE_INPUT_CLOSED);
+					}
 				} finally {
 					localInputClosed = true;
 					home.signal(home.segregator.signal);
@@ -218,17 +227,20 @@ public class Channel implements Closeable {
 		@Override
 		public void close() throws IOException {
 			synchronized(mutex) {
+				while (state==Multiplexer.STATE_CHANNEL_IN_CLOSING_FUNCTION) {
+					try{mutex.wait();}catch(InterruptedException ie){Thread.currentThread().interrupt();}
+				}
 				if (localOutputClosed) return;
 
 				try {
-					cmParam.state = Multiplexer.STATE_CHANNEL_IN_CLOSING_FUNCTION;
+					setState(Multiplexer.STATE_CHANNEL_IN_CLOSING_FUNCTION);
 					
 					home.writePacket(channel, input.clearProcessed(), Multiplexer.FLAG_OCL);
 					if (isConnectionClosed()) {
-						cmParam.state = Multiplexer.STATE_CHANNEL_CLOSED;
+						setState(Multiplexer.STATE_CHANNEL_CLOSED);
 						home.unbind(channel);
 					}
-					cmParam.state = Multiplexer.STATE_OUTPUT_CLOSED;
+					setState(Multiplexer.STATE_OUTPUT_CLOSED);
 				} finally {
 					localOutputClosed = true;
 					home.signal(signal);
@@ -241,6 +253,9 @@ public class Channel implements Closeable {
 	@Override
 	public void close() throws IOException {
 		synchronized(mutex) {
+			while (state==Multiplexer.STATE_CHANNEL_IN_CLOSING_FUNCTION) {
+				try{mutex.wait();}catch(InterruptedException ie){Thread.currentThread().interrupt();}
+			}
 			if (isConnectionClosed()) return;
 			
 			try {
@@ -258,10 +273,10 @@ public class Channel implements Closeable {
 					throw new IOException("close timeout other side may not be closed");
 				}
 				
-				cmParam.state = Multiplexer.STATE_CHANNEL_CLOSED;
+				setState(Multiplexer.STATE_CHANNEL_CLOSED);
 				home.unbind(channel);
 			} finally {
-				cmParam.state = Multiplexer.STATE_CHANNEL_CLOSED;
+				setState(Multiplexer.STATE_CHANNEL_CLOSED);
 				home.signal(signal);
 			}
 		}
@@ -273,10 +288,18 @@ public class Channel implements Closeable {
 			localInputClosed = true;
 			localOutputClosed = true;
 			remoteOutputClosed = true;
-			cmParam.state = Multiplexer.STATE_CHANNEL_CLOSED;
+			setState(Multiplexer.STATE_CHANNEL_CLOSED);
 			mutex.notifyAll();
 		}
 	}
+	
+	void setState(long newState) {
+		if (state!=Multiplexer.STATE_CHANNEL_CLOSED) {
+			cmParam.state = newState;
+		}
+		state = newState;
+	}
+	
 	
 }
 
