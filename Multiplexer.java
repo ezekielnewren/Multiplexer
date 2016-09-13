@@ -207,7 +207,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		synchronized(mutex) {
 			ChannelParameter cmParam = getCP(channel);
 			
-			if ((cmParam.state&(STATE_ACCEPTING|STATE_ACCEPTED))!=0) throw new ChannelListenException("Cannot listen on the same channel twice");
+			if ((cmParam.state&(STATE_ACCEPTING|STATE_ESTABLISHED))!=0) throw new ChannelListenException("Cannot listen on the same channel twice");
 			if (cmParam.state!=STATE_PRE_PASV_OPEN) bind(channel, recurring);
 			cmParam.state = STATE_LISTENING;
 		}
@@ -294,7 +294,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 				Channel cm = (cmParam.channel=new Channel(home, channel, bufferSize, cmParam.send));
 				
 				writePacket(channel, bufferSize, FLAG_SYN);
-				cmParam.state = STATE_ACCEPTED;
+				cmParam.state = STATE_ESTABLISHED;
 				//MuxDriver.log("accepted");
 				return cm;
 			} finally {
@@ -489,15 +489,11 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	static final long STATE_LISTENING = (1<<i++);
 	static final long STATE_PRE_PASV_OPEN = (1<<i++);
 	static final long STATE_ACCEPTING = (1<<i++);
-	static final long STATE_ACCEPTED = (1<<i++);
 	static final long STATE_CONNECTING = (1<<i++);
-	static final long STATE_CONNECTED = (1<<i++);
-	static final long STATE_ESTABLISHED = STATE_ACCEPTED|STATE_CONNECTED;
-	static final long STATE_INPUT_CLOSING = (1<<i++);
+	static final long STATE_ESTABLISHED = (1<<i++);
 	static final long STATE_INPUT_CLOSED = (1<<i++);
-	static final long STATE_OUTPUT_CLOSING = (1<<i++);
 	static final long STATE_OUTPUT_CLOSED = (1<<i++);
-	static final long STATE_CHANNEL_CLOSING = (1<<i++);
+	static final long STATE_CHANNEL_IN_CLOSING_FUNCTION = (1<<i++);
 	static final long STATE_CHANNEL_CLOSED = STATE_INPUT_CLOSED|STATE_OUTPUT_CLOSED;
 
 	ChannelParameter getCP(int channel) {

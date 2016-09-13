@@ -137,7 +137,7 @@ public class Channel implements Closeable {
 				if (localInputClosed) return;
 
 				try {
-					cmParam.state = Multiplexer.STATE_INPUT_CLOSING;
+					cmParam.state = Multiplexer.STATE_CHANNEL_IN_CLOSING_FUNCTION;
 				
 					if (!remoteOutputClosed) {
 						home.writePacket(channel, clearProcessed(), Multiplexer.FLAG_ICL);
@@ -221,7 +221,7 @@ public class Channel implements Closeable {
 				if (localOutputClosed) return;
 
 				try {
-					cmParam.state = Multiplexer.STATE_OUTPUT_CLOSING;
+					cmParam.state = Multiplexer.STATE_CHANNEL_IN_CLOSING_FUNCTION;
 					
 					home.writePacket(channel, input.clearProcessed(), Multiplexer.FLAG_OCL);
 					if (isConnectionClosed()) {
