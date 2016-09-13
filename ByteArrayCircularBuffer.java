@@ -63,6 +63,13 @@ public class ByteArrayCircularBuffer {
 		return cbuff.length;
 	}
 
+	public long skip(long total) throws IOException {
+		if (inputClosed) throw new IOException("InputStream Closed");
+		int skip = (int) Math.min(available(), total);
+		decReadable(skip);
+		return skip;
+	}
+	
 	public int read() throws IOException {
 		if (inputClosed) throw new IOException("InputStream Closed");
 		synchronized(readLock) {
@@ -202,6 +209,11 @@ public class ByteArrayCircularBuffer {
 			return inst.read(b, off, len);
 		}
 
+		@Override
+		public long skip(long total) throws IOException {
+			return inst.skip(total);
+		}
+		
 		public void close() throws IOException {
 			inst.closeInput();
 		}

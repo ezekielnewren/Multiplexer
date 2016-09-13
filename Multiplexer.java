@@ -278,7 +278,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 			cmParam.state = STATE_ACCEPTING;
 			
 			
-			if (cmParam.send==0&&await(cmParam.signal)>timeout) {
+			if (cmParam.send==0&&await(cmParam.signal, DEFAULT_CONNECTION_TIMEOUT)>timeout) {
 				//MuxDriver.log("timeout");
 				cmParam.state = STATE_CHANNEL_CLOSED;
 				unbind(channel);
@@ -380,7 +380,6 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 			this.home = parent;
 			signal = new AtomicBoolean();
 			handle = new Thread(this);
-			handle.setName(Thread.currentThread().getName()+"segregator");
 			handle.setDaemon(true);
 			handle.start();
 		}
@@ -550,7 +549,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		return time;
 	}
 	
-	long await(AtomicBoolean ab) {
-		return await(ab, Long.MAX_VALUE);
-	}
+//	long await(AtomicBoolean ab) {
+//		return await(ab, Long.MAX_VALUE);
+//	}
 }
