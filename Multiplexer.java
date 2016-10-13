@@ -40,16 +40,10 @@ public class Multiplexer {
 	static final long STATE_LISTENING = (1<<i++);
 	static final long STATE_PRE_PASV_OPEN = (1<<i++);
 	static final long STATE_ACCEPTING = (1<<i++);
-	static final long STATE_ACCEPTED = (1<<i++);
 	static final long STATE_CONNECTING = (1<<i++);
-	static final long STATE_CONNECTED = (1<<i++);
-	static final long STATE_ESTABLISHED = STATE_ACCEPTED|STATE_CONNECTED;
-	static final long STATE_INPUT_CLOSING = (1<<i++);
-	static final long STATE_INPUT_CLOSED = (1<<i++);
-	static final long STATE_OUTPUT_CLOSING = (1<<i++);
-	static final long STATE_OUTPUT_CLOSED = (1<<i++);
+	static final long STATE_ESTABLISHED = (1<<i++);
 	static final long STATE_CHANNEL_CLOSING = (1<<i++);
-	static final long STATE_CHANNEL_CLOSED = STATE_INPUT_CLOSED|STATE_OUTPUT_CLOSED;
+	static final long STATE_CHANNEL_CLOSED = (1<<i++);
 	
 	public Multiplexer(InputStream is, OutputStream os, int... prePasvOpen) throws IOException {
 		input = (is instanceof DataInputStream)?(DataInputStream)is:new DataInputStream(is);
