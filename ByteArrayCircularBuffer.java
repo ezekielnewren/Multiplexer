@@ -38,6 +38,7 @@ public class ByteArrayCircularBuffer {
 
 	public ByteArrayCircularBuffer(byte[] reusableByteArray) {
 		if (reusableByteArray==null) throw new NullPointerException();
+		if (reusableByteArray.length==0) throw new IllegalArgumentException("buffer size must be at least 1");
 		cbuff = reusableByteArray;
 		is = new CircularBufferInputStream();
 		os = new CircularBufferOutputStream();
@@ -58,6 +59,15 @@ public class ByteArrayCircularBuffer {
 		}
 	}
 
+	public long skip(long skip) throws IOException {
+		synchronized(fieldLock) {
+			if (skip<0) throw new IllegalArgumentException();
+			int amount = (int) Math.min(skip, readable);
+			decReadable(amount);
+			return amount;
+		}
+	}
+	
 	public int getBufferSize() {
 		return cbuff.length;
 	}
@@ -193,6 +203,10 @@ public class ByteArrayCircularBuffer {
 			return inst.available();
 		}
 
+		public long skip(long amount) throws IOException {
+			return inst.skip(amount);
+		}
+		
 		public int read() throws IOException {
 			return inst.read();
 		}
