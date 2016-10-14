@@ -18,11 +18,12 @@ public class Multiplexer {
 	private final byte[] sendBuffer = new byte[8+4+1];
 	private final CRC32 sendCRC = new CRC32();
 	private final BitSet channelBound = new BitSet();
+	private final ChannelMetadata[] cmMeta = new ChannelMetadata[0x10000];
 	
 	private boolean closed = false;
 	
 	final Demultiplexer segregator;
-	final Object mutex = this;
+	final Object mutex = new Object();
 	
 	static final int FLAG_NULL = 0x0;
 	static final int FLAG_SYN = 0x1;
@@ -33,6 +34,7 @@ public class Multiplexer {
 	static final int FLAG_KAL = 0x10;
 	static final int FLAG_MCL = 0x20;
 	static final int FLAG_CLI = 0x40;
+	static final int FLAG_SOM = 0x80; // STREAM_OR_MESSAGE
 
 	private static int i = 0;
 	static final long STATE_UNBOUND = (1<<i++);
@@ -49,8 +51,15 @@ public class Multiplexer {
 		input = (is instanceof DataInputStream)?(DataInputStream)is:new DataInputStream(is);
 		output = (os instanceof DataOutputStream)?(DataOutputStream)os:new DataOutputStream(os);
 		
-		segregator = null;
+		for (int i=0; i<prePasvOpen.length; i++) {
+			validChannel(prePasvOpen[i]);
+		}
 		
+		for (int i=0; i<cmMeta.length; i++) {
+			cmMeta[i] = new ChannelMetadata();
+		}
+		
+		segregator = new Demultiplexer();
 	}
 
 	void writePacket(int channel, int processed, byte[] b, int off, int len, int flags) throws IOException {
@@ -101,11 +110,9 @@ public class Multiplexer {
 
 	class Demultiplexer implements Runnable {
 
-		final Multiplexer home;
 		final AtomicBoolean signal;
 		
-		public Demultiplexer(Multiplexer parent) {
-			this.home = parent;
+		public Demultiplexer() {
 			signal = new AtomicBoolean();
 			Thread handle = new Thread(this);
 			handle.setName(Thread.currentThread().getName()+"segregator");
@@ -137,6 +144,7 @@ public class Multiplexer {
 
 					// process packet
 					synchronized(mutex) {
+						
 					}
 				}
 			} catch (IOException ioe) {
@@ -153,20 +161,23 @@ public class Multiplexer {
 		
 	}
 	
+	ChannelMetadata getCM(int index) {
+		return cmMeta[index];
+	}
 	
-
-//		static void validChannel(int channel) {
-//			if (!(0<=channel&&channel<=0xffff)) throw new IllegalArgumentException();
-//		}
-//
-//		static void validBufferSize(int recvBufferSize) {
-//			if (!(0<recvBufferSize&&recvBufferSize<=0xffffff)) throw new IllegalArgumentException("bufferSize must be between 1 and 16777215 inclusive");
-//		}
-//
-//		static void valid(int channel, int recvBufferSize) {
-//			validChannel(channel);
-//			validBufferSize(recvBufferSize);
-//		}
+	
+	class ChannelMetadata {
+		final AtomicBoolean signal = new AtomicBoolean();
+		Channel ptr;
+		long state = STATE_UNBOUND;
+		boolean reset;
+		
+		void clear() {
+			ptr = null;
+			state = STATE_UNBOUND;
+			reset = false;
+		}
+	}
 
 
 	// read/write numbers
@@ -187,5 +198,18 @@ public class Multiplexer {
 		for (int i=0; i<len; i++) {
 			b[off+i] = (byte) ((num>>>(len-1-i)*8)&0xFF);
 		}
+	}
+	
+	private static void validChannel(int channel) {
+		if (!(0<=channel&&channel<=0xffff)) throw new IllegalArgumentException();
+	}
+
+	private static void validBufferSize(int recvBufferSize) {
+		if (!(0<recvBufferSize&&recvBufferSize<=0xffffff)) throw new IllegalArgumentException("bufferSize must be between 1 and 16777215 inclusive");
+	}
+
+	private static void valid(int channel, int recvBufferSize) {
+		validChannel(channel);
+		validBufferSize(recvBufferSize);
 	}
 }
