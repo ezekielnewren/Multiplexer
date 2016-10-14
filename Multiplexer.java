@@ -27,14 +27,14 @@ public class Multiplexer {
 	
 	static final int FLAG_NULL = 0x0;
 	static final int FLAG_SYN = 0x1;
-	static final int FLAG_RST = 0x2;
-	static final int FLAG_OCL = 0x4;
-	static final int FLAG_ICL = 0x8;
-	static final int FLAG_IOCL = FLAG_ICL|FLAG_OCL;
+	static final int FLAG_CLI = 0x2;
+	static final int FLAG_MSG = 0x4; // message mode
+	static final int FLAG_RST = 0x8;
 	static final int FLAG_KAL = 0x10;
-	static final int FLAG_MCL = 0x20;
-	static final int FLAG_CLI = 0x40;
-	static final int FLAG_SOM = 0x80; // STREAM_OR_MESSAGE
+	static final int FLAG_OCL = 0x20;
+	static final int FLAG_ICL = 0x40;
+	static final int FLAG_IOCL = FLAG_ICL|FLAG_OCL;
+	static final int FLAG_MCL = 0x80;
 
 	private static int i = 0;
 	static final long STATE_UNBOUND = (1<<i++);
@@ -46,6 +46,9 @@ public class Multiplexer {
 	static final long STATE_ESTABLISHED = (1<<i++);
 	static final long STATE_CHANNEL_CLOSING = (1<<i++);
 	static final long STATE_CHANNEL_CLOSED = (1<<i++);
+
+	public static final long DEFAULT_ACCEPT_TIMEOUT = Long.MAX_VALUE;
+	public static final long DEFAULT_CONNECTION_TIMEOUT = 60000;
 	
 	public Multiplexer(InputStream is, OutputStream os, int... prePasvOpen) throws IOException {
 		input = (is instanceof DataInputStream)?(DataInputStream)is:new DataInputStream(is);
@@ -108,9 +111,74 @@ public class Multiplexer {
 		writePacket(channel, processed, null, 0, 0, flags);
 	}
 
+	private void bind(int channel) throws IOException {
+		validChannel(channel);
+		
+		assert(Thread.holdsLock(mutex));
+		if (channelBound.get(channel)) throw new ChannelBindException();
+		ChannelMetadata cmMeta = getCM(channel);
+		cmMeta.clear();
+		cmMeta.state = STATE_BOUND;
+	}
+	
+	private Channel connect(int channel, int recvBufferSize, long timeout, boolean messageMode) throws IOException {
+		valid(channel, recvBufferSize);
+		if (timeout<0) throw new IllegalArgumentException("timeout cannot be negative");
+		
+		
+		synchronized(mutex) {
+			
+			bind(channel);
+			
+			ChannelMetadata cmMeta = getCM(channel); 
+			
+			try {
+				writePacket(channel, recvBufferSize, FLAG_SYN|FLAG_CLI);
+				while (cmMeta.signal.compareAndSet(true, false)) {
+					try{mutex.wait();}catch(InterruptedException e){Thread.currentThread().interrupt();}
+				}
+				
+				assert(segregator.channel==channel);
+				
+				Channel cm;
+				
+				if (!messageMode) {
+					cm = new DatagramPacketChannel(this, channel, recvBufferSize, segregator.proc);
+				} else {
+					cm = new StreamChannel(this, channel, recvBufferSize, segregator.proc);
+				}
+				
+				
+				
+				return cm;
+			} finally {
+				mutex.notifyAll();
+			}
+		}
+	}
+	
+	private Channel accept(int channel, int recvBufferSize) throws IOException {
+		return accept(channel, recvBufferSize, DEFAULT_ACCEPT_TIMEOUT, false, false);
+	}
+	private Channel accept(int channel, int recvBufferSize, long timeout, boolean messageMode, boolean recurring) throws IOException {
+		
+		return null;
+	}
+	
+	public StreamChannel connectStreamChannel(int channel, int recvBufferSize, long timeout) {
+		
+		
+		return null;
+	}
+	
 	class Demultiplexer implements Runnable {
 
 		final AtomicBoolean signal;
+		
+		int len;
+		int channel;
+		int proc;
+		int flags;
 		
 		public Demultiplexer() {
 			signal = new AtomicBoolean();
@@ -130,14 +198,18 @@ public class Multiplexer {
 					// 2B_len, 2B_channel, 3B_proc, 1B_flags, ...B_payload, 4B_crc
 					crc.reset();
 					input.readFully(recvBuffer, 0, 8);
-					int len = (int) bytesToNumber(recvBuffer, 0, 2);
-					int channel = (int) bytesToNumber(recvBuffer, 2, 2);
-					int proc = (int) bytesToNumber(recvBuffer, 4, 3);
-					int flags = (int) bytesToNumber(recvBuffer, 7, 1);
+					
+					// header fields
+					len = (int) bytesToNumber(recvBuffer, 0, 2);
+					channel = (int) bytesToNumber(recvBuffer, 2, 2);
+					proc = (int) bytesToNumber(recvBuffer, 4, 3);
+					flags = (int) bytesToNumber(recvBuffer, 7, 1);
 
+					// payload+crc
 					input.readFully(recvBuffer, 8, len+4);
 					long packetCRC = bytesToNumber(recvBuffer, 8+len, 4);
 
+					// verify header and payload with trailer
 					crc.update(recvBuffer, 0, 8+len);
 					long realCRC = crc.getValue();
 					if (packetCRC!=realCRC) throw new IOException("Malformed packet");
@@ -170,12 +242,11 @@ public class Multiplexer {
 		final AtomicBoolean signal = new AtomicBoolean();
 		Channel ptr;
 		long state = STATE_UNBOUND;
-		boolean reset;
 		
 		void clear() {
+			signal.set(false);
 			ptr = null;
 			state = STATE_UNBOUND;
-			reset = false;
 		}
 	}
 
