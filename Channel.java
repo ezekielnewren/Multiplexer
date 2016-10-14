@@ -41,8 +41,10 @@ class Channel implements Closeable {
 		}
 	}
 	
-	void incWritten(int amount) {
+	protected void incWritten(int amount) {
 		synchronized(mutex) {
+			if (amount<0) throw new IllegalArgumentException();
+			if (written+amount>sendBufferSize) throw new IllegalArgumentException();
 			written += amount;
 		}
 	}
@@ -53,7 +55,7 @@ class Channel implements Closeable {
 		}
 	}
 	
-	void incProcessed(int amount) {
+	protected void incProcessed(int amount) {
 		synchronized(mutex) {
 			processed += amount;
 		}
