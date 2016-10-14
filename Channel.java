@@ -2,38 +2,31 @@ package com.github.ezekielnewren.net.multiplexer;
 
 import java.io.Closeable;
 
-public class Channel implements Closeable {
+class Channel implements Closeable {
 
-	private final Channel inst = this;
-	
 	final Multiplexer home;
 	final int channel;
-	final Object fieldLock;
-	final ChannelInputStream input;
-	final ChannelOutputStream output;
+	final Object mutex;
 
 	boolean localInputClosed = false;
 	boolean localOutputClosed = false;
-	boolean remoteInputClosed = false;
 	boolean remoteOutputClosed = false;
 
-	public Channel(Multiplexer inst, int channel, int recvBufferSize, int sendBufferSize) {
+	Channel(Multiplexer inst, int channel, int recvBufferSize, int sendBufferSize) {
 		this.home = inst;
 		this.channel = channel;
-		fieldLock = home.mutex;
-		input = new ChannelInputStream(recvBufferSize);
-		output = new ChannelOutputStream(sendBufferSize);
+		mutex = home.mutex;
 	}
 
-	class ChannelInputStream {
-		ChannelInputStream(int recvBufferSize) {
-			
+	public boolean isConnectionClosed() {
+		synchronized(mutex) {
+			return localOutputClosed&&remoteOutputClosed;
 		}
 	}
-
-	class ChannelOutputStream {
-		ChannelOutputStream(int sendBufferSize) {
-			
+	
+	public boolean isClosed() {
+		synchronized(mutex) {
+			return localInputClosed&&localOutputClosed&&remoteOutputClosed;
 		}
 	}
 	

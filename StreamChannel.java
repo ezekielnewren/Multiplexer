@@ -1,11 +1,33 @@
 package com.github.ezekielnewren.net.multiplexer;
 
-import java.net.DatagramPacket;
+public class StreamChannel extends Channel {
 
-public class StreamChannel {
+	final ChannelInputStream input;
+	final ChannelOutputStream output;
+	
+	StreamChannel(Multiplexer inst, int channel, int recvBufferSize, int sendBufferSize) {
+		super(inst, channel, recvBufferSize, sendBufferSize);
+		input = new ChannelInputStream(recvBufferSize);
+		output = new ChannelOutputStream(sendBufferSize);
+	}
 
-	public static void main(String[] args) {
-		//DatagramPacket dp = new DatagramPacket();
+	class ChannelInputStream {
+		final ByteArrayCircularBuffer window;
+		
+		ChannelInputStream(int recvBufferSize) {
+			window = new ByteArrayCircularBuffer(recvBufferSize);
+		}
+		
+	}
+
+	class ChannelOutputStream {
+		
+		private final int sendBufferSize;
+		private int writeable;
+		
+		ChannelOutputStream(int sendBufferSize) {
+			this.sendBufferSize = writeable = sendBufferSize;
+		}
 	}
 	
 }
