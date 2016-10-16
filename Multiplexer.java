@@ -41,7 +41,7 @@ public class Multiplexer {
 	static final long STATE_UNBOUND = (1<<i++);
 	static final long STATE_BOUND = (1<<i++);
 	static final long STATE_LISTENING = (1<<i++);
-	static final long STATE_PRE_PASV_OPEN = (1<<i++);
+	//static final long STATE_PRE_PASV_OPEN = (1<<i++);
 	static final long STATE_ACCEPTING = (1<<i++);
 	static final long STATE_CONNECTING = (1<<i++);
 	static final long STATE_ESTABLISHED = (1<<i++);
@@ -162,17 +162,17 @@ public class Multiplexer {
 					throw new ChannelTimeoutException();
 				}
 				
-				assert(segregator.channel==channel);
-
-				if ((segregator.flags&FLAG_RST)!=0) {
+				if (cmMeta.reset) {
 					cmMeta.state = STATE_CHANNEL_CLOSED;
+					unbind(channel);
+					throw new ChannelResetException();
 				}
 				
 				Channel cm;
 				if (messageMode) {
-					cm = new DatagramPacketChannel(this, channel, recvBufferSize, segregator.proc);
+					cm = new DatagramPacketChannel(this, channel, recvBufferSize, cmMeta.sendBufferSize);
 				} else {
-					cm = new StreamChannel(this, channel, recvBufferSize, segregator.proc);
+					cm = new StreamChannel(this, channel, recvBufferSize, cmMeta.sendBufferSize);
 				}
 				cmMeta.ptr = cm;
 				cmMeta.state = STATE_ESTABLISHED;
@@ -180,6 +180,7 @@ public class Multiplexer {
 				
 				return cm;
 			} finally {
+				segregator.signal.set(true);
 				mutex.notifyAll();
 			}
 		}
@@ -191,15 +192,16 @@ public class Multiplexer {
 		if (timeout<0) throw new IllegalArgumentException();
 		
 		synchronized(mutex) {
-			if (cmMeta.state!=STATE_PRE_PASV_OPEN) {
-				
+			if (cmMeta.state!=STATE_LISTENING) {
+				bind(channel);
+				cmMeta.state = STATE_LISTENING;
 			}
 
 			Channel cm;
 			if (messageMode) {
-				cm = new DatagramPacketChannel(this, channel, recvBufferSize, segregator.proc);
+				cm = new DatagramPacketChannel(this, channel, recvBufferSize, cmMeta.sendBufferSize);
 			} else {
-				cm = new StreamChannel(this, channel, recvBufferSize, segregator.proc);
+				cm = new StreamChannel(this, channel, recvBufferSize, cmMeta.sendBufferSize);
 			}
 			
 			return cm;
@@ -218,15 +220,9 @@ public class Multiplexer {
 	
 	class Demultiplexer implements Runnable {
 
-		final AtomicBoolean signal;
-		
-		int len;
-		int channel;
-		int proc;
-		int flags;
+		final AtomicBoolean signal = new AtomicBoolean();
 		
 		public Demultiplexer() {
-			signal = new AtomicBoolean();
 			Thread handle = new Thread(this);
 			handle.setName(Thread.currentThread().getName()+"segregator");
 			handle.setDaemon(true);
@@ -245,10 +241,10 @@ public class Multiplexer {
 					input.readFully(recvBuffer, 0, 8);
 					
 					// header fields
-					len = (int) bytesToNumber(recvBuffer, 0, 2);
-					channel = (int) bytesToNumber(recvBuffer, 2, 2);
-					proc = (int) bytesToNumber(recvBuffer, 4, 3);
-					flags = (int) bytesToNumber(recvBuffer, 7, 1);
+					int len = (int) bytesToNumber(recvBuffer, 0, 2);
+					int channel = (int) bytesToNumber(recvBuffer, 2, 2);
+					int proc = (int) bytesToNumber(recvBuffer, 4, 3);
+					int flags = (int) bytesToNumber(recvBuffer, 7, 1);
 
 					// payload+crc
 					input.readFully(recvBuffer, 8, len+4);
@@ -263,23 +259,34 @@ public class Multiplexer {
 					
 					// process packet
 					synchronized(mutex) {
-						if ( (flags&FLAG_MCL)!=0 ) {
-							close();
-						}
-						
-						if ((flags&FLAG_SYN)!=0&& (cmMeta.state & (STATE_CONNECTING|STATE_ACCEPTING))!=0 ) {
-							try {
+						try {
+							
+							
+							
+							if ( (flags&FLAG_MCL)!=0 ) {
+								close();
+							}
+							
+							if ((flags&FLAG_RST)!=0) {
+								if ( (cmMeta.state&(STATE_CONNECTING|STATE_ACCEPTING)) != 0 ) {
+									
+								}
+							}
+							
+							if ((flags&FLAG_SYN)!=0&& (cmMeta.state & (STATE_CONNECTING|STATE_ACCEPTING|STATE_LISTENING))!=0 ) {
 								final AtomicLong timer = new AtomicLong();
 								while (!signal.compareAndSet(true, false)) {
 									linger(0, timer);
 								}
-								
-								
-							} finally {
-								mutex.notifyAll();
+								cmMeta.signal.set(true);
 							}
-						}
 						
+							
+							
+							
+						} finally {
+							mutex.notifyAll();
+						}
 					}
 				}
 			} catch (IOException ioe) {
@@ -311,6 +318,8 @@ public class Multiplexer {
 		final AtomicBoolean signal = new AtomicBoolean();
 		Channel ptr;
 		long state = STATE_UNBOUND;
+		boolean reset;
+		int sendBufferSize;
 		
 		void clear() {
 			signal.set(false);
