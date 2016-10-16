@@ -185,13 +185,21 @@ public class Multiplexer {
 		}
 	}
 	
-	private Channel accept(int channel, int recvBufferSize) throws IOException {
-		return accept(channel, recvBufferSize, DEFAULT_ACCEPT_TIMEOUT, false, false);
-	}
 	private Channel accept(int channel, int recvBufferSize, long timeout, boolean messageMode, boolean recurring) throws IOException {
+		ChannelMetadata cmMeta = getCM(channel);
+		validBufferSize(recvBufferSize);
+		if (timeout<0) throw new IllegalArgumentException();
+		
+		synchronized(mutex) {
+			
+		}
 		
 		return null;
 	}
+	
+//	private Channel accept(int channel, int recvBufferSize) throws IOException {
+//		return accept(channel, recvBufferSize, DEFAULT_ACCEPT_TIMEOUT, false, false);
+//	}
 	
 	public StreamChannel connectStreamChannel(int channel, int recvBufferSize, long timeout) {
 		
@@ -303,7 +311,7 @@ public class Multiplexer {
 	}
 
 	ChannelMetadata getCM(int index) {
-		if (!(0<index&&index<cmMeta.length)) throw new IllegalArgumentException("invalid channel "+index); 
+		if (!(0<=index&&index<cmMeta.length)) throw new IllegalArgumentException("invalid channel "+index); 
 		ChannelMetadata cm = cmMeta[index];
 		if (cm==null) throw new NullPointerException();
 		return cm;
