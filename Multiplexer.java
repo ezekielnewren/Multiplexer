@@ -12,7 +12,7 @@ import java.util.zip.CRC32;
 
 public class Multiplexer {
 
-	private final Multiplexer home = this;
+//	private final Multiplexer home = this;
 	private final DataInputStream input;
 	private final DataOutputStream output;
 	private final byte[] recvBuffer = new byte[8+0xffff+4];
@@ -137,9 +137,9 @@ public class Multiplexer {
 	}
 	
 	private Channel connect(int channel, int recvBufferSize, long timeout, boolean messageMode) throws IOException {
+		ChannelMetadata cmMeta = getCM(channel);
 		validBufferSize(recvBufferSize);
 		if (timeout<0) throw new IllegalArgumentException("timeout cannot be negative");
-		ChannelMetadata cmMeta = getCM(channel);
 		
 		synchronized(mutex) {
 			try {
@@ -303,6 +303,7 @@ public class Multiplexer {
 	}
 
 	ChannelMetadata getCM(int index) {
+		if (!(0<index&&index<cmMeta.length)) throw new IllegalArgumentException("invalid channel "+index); 
 		ChannelMetadata cm = cmMeta[index];
 		if (cm==null) throw new NullPointerException();
 		return cm;
