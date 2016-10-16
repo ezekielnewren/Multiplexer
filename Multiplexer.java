@@ -169,7 +169,7 @@ public class Multiplexer {
 				}
 				
 				Channel cm;
-				if (!messageMode) {
+				if (messageMode) {
 					cm = new DatagramPacketChannel(this, channel, recvBufferSize, segregator.proc);
 				} else {
 					cm = new StreamChannel(this, channel, recvBufferSize, segregator.proc);
@@ -191,10 +191,19 @@ public class Multiplexer {
 		if (timeout<0) throw new IllegalArgumentException();
 		
 		synchronized(mutex) {
+			if (cmMeta.state!=STATE_PRE_PASV_OPEN) {
+				
+			}
+
+			Channel cm;
+			if (messageMode) {
+				cm = new DatagramPacketChannel(this, channel, recvBufferSize, segregator.proc);
+			} else {
+				cm = new StreamChannel(this, channel, recvBufferSize, segregator.proc);
+			}
 			
+			return cm;
 		}
-		
-		return null;
 	}
 	
 //	private Channel accept(int channel, int recvBufferSize) throws IOException {
