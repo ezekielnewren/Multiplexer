@@ -91,16 +91,41 @@ abstract class Channel implements Closeable {
 		home.writePacket(channel, clearProcessed(), b, off, len, Multiplexer.FLAG_NULL);
 	}
 	
-	void setState(int newState) {
+	void setState(long newState) {
 		assert(Thread.holdsLock(mutex));
 		
 		state = newState;
 		if (newState!=Multiplexer.STATE_CHANNEL_CLOSED) cmMeta.state = newState;
 	}
+
+	public void closeInput() throws IOException {
+		
+	}
+	
+	void closeInputQuietly() {
+		
+	}
+	
+	public void closeOutput() throws IOException {
+		
+	}
+	
+	void closeOutputQuietly() {
+		
+	}
 	
 	@Override
 	public void close() {
 		
+	}
+
+	void closeQuietly() {
+		localInputClosed = true;
+		localOutputClosed = true;
+		remoteOutputClosed = true;
+		synchronized(mutex) {
+			setState(Multiplexer.STATE_CHANNEL_CLOSED);
+		}
 	}
 	
 }
