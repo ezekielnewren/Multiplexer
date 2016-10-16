@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.CRC32;
 
-public class Multiplexer {
+public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 
 	private final DataInputStream input;
 	private final DataOutputStream output;
@@ -373,5 +373,82 @@ public class Multiplexer {
 		long time = (System.nanoTime()-beg)/1000000;
 		timer.addAndGet(time);
 		return time;
+	}
+
+	@Override
+	public Channel acceptDatagramPacketChannel(int channel, int bufferSize,
+			long timeout, boolean recurring) throws IOException {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Channel acceptDatagramPacketChannel(int channel, int bufferSize,
+			boolean recurring) throws IOException {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Channel acceptDatagramPacketChannel(int channel, int bufferSize,
+			long timeout) throws IOException {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Channel acceptDatagramPacketChannel(int channel, int bufferSize)
+			throws IOException {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Channel acceptStreamChannel(int channel, int bufferSize,
+			long timeout, boolean recurring) throws IOException {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Channel acceptStreamChannel(int channel, int bufferSize,
+			boolean recurring) throws IOException {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Channel acceptStreamChannel(int channel, int bufferSize, long timeout)
+			throws IOException {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Channel acceptStreamChannel(int channel, int bufferSize)
+			throws IOException {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Channel connectDatagramPacketChannel(int channel,
+			int recvBufferSize, long timeout) throws IOException {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Channel connectDatagramPacketChannel(int channel, int bufferSize)
+			throws IOException {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Channel connectStreamChannel(int channel, int bufferSize)
+			throws IOException {
+		// TODO Auto-generated method stub
+		return null;
 	}
 }
