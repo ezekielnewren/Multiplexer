@@ -12,6 +12,7 @@ import java.util.zip.CRC32;
 
 public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 
+	private final Multiplexer home = this;
 	private final DataInputStream input;
 	private final DataOutputStream output;
 	private final byte[] recvBuffer = new byte[8+0xffff+4];
@@ -40,13 +41,14 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	static final long STATE_UNBOUND = (1<<i++);
 	static final long STATE_BOUND = (1<<i++);
 	static final long STATE_LISTENING = (1<<i++);
-	//static final long STATE_PRE_PASV_OPEN = (1<<i++);
 	static final long STATE_ACCEPTING = (1<<i++);
 	static final long STATE_CONNECTING = (1<<i++);
 	static final long STATE_ESTABLISHED = (1<<i++);
 	static final long STATE_CHANNEL_CLOSING = (1<<i++);
 	static final long STATE_CHANNEL_CLOSED = (1<<i++);
 
+	static final long LINGERING_STATES = STATE_CONNECTING|STATE_ACCEPTING|STATE_LISTENING|STATE_CHANNEL_CLOSING;
+	
 	public static final long DEFAULT_ACCEPT_TIMEOUT = Long.MAX_VALUE;
 	public static final long DEFAULT_CONNECTION_TIMEOUT = 60000;
 	
@@ -54,12 +56,15 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		input = (is instanceof DataInputStream)?(DataInputStream)is:new DataInputStream(is);
 		output = (os instanceof DataOutputStream)?(DataOutputStream)os:new DataOutputStream(os);
 		
-		for (int i=0; i<prePasvOpen.length; i++) {
-			bind(prePasvOpen[i]);
-		}
-		
 		for (int i=0; i<cmMeta.length; i++) {
 			cmMeta[i] = new ChannelMetadata();
+		}
+
+		synchronized(mutex) {
+			for (int i=0; i<prePasvOpen.length; i++) {
+				bind(prePasvOpen[i]);
+				getCM(prePasvOpen[i]).state = STATE_LISTENING;
+			}
 		}
 		
 		segregator = new Demultiplexer();
@@ -110,6 +115,10 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	void writePacket(int channel, int processed, int flags) throws IOException {
 		writePacket(channel, processed, null, 0, 0, flags);
 	}
+	
+	private boolean isBound(int channel) {
+		return channelBound.get(channel);
+	}
 
 	private void bind(int channel) throws IOException {
 		// check the arguments and state
@@ -150,7 +159,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 				
 				// wait for response
 				final AtomicLong timer = new AtomicLong();
-				while (timer.get()<timeout && cmMeta.signal.compareAndSet(true, false)) {
+				while (timer.get()<timeout && !cmMeta.nextPacketRead.compareAndSet(true, false)) {
 					linger(timeout, timer);
 				}
 				
@@ -169,9 +178,9 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 				
 				Channel cm;
 				if (messageMode) {
-					cm = new DatagramPacketChannel(this, channel, recvBufferSize, cmMeta.sendBufferSize);
+					cm = new DatagramPacketChannel(this, channel, recvBufferSize, cmMeta.proc);
 				} else {
-					cm = new StreamChannel(this, channel, recvBufferSize, cmMeta.sendBufferSize);
+					cm = new StreamChannel(this, channel, recvBufferSize, cmMeta.proc);
 				}
 				cmMeta.ptr = cm;
 				cmMeta.state = STATE_ESTABLISHED;
@@ -179,7 +188,6 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 				
 				return cm;
 			} finally {
-				segregator.signal.set(true);
 				mutex.notifyAll();
 			}
 		}
@@ -191,35 +199,34 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		if (timeout<0) throw new IllegalArgumentException();
 		
 		synchronized(mutex) {
-			if (cmMeta.state!=STATE_LISTENING) {
-				bind(channel);
-				cmMeta.state = STATE_LISTENING;
+			try {
+				if (cmMeta.state!=STATE_LISTENING) {
+					bind(channel);
+				}
+				cmMeta.state = STATE_ACCEPTING;
+	
+				Channel cm;
+				if (messageMode) {
+					cm = new DatagramPacketChannel(this, channel, recvBufferSize, cmMeta.proc);
+				} else {
+					cm = new StreamChannel(this, channel, recvBufferSize, cmMeta.proc);
+				}
+				
+				return cm;
+			} finally {
+				cmMeta.nextPacketRead.set(true);
+				mutex.notifyAll();
 			}
-
-			Channel cm;
-			if (messageMode) {
-				cm = new DatagramPacketChannel(this, channel, recvBufferSize, cmMeta.sendBufferSize);
-			} else {
-				cm = new StreamChannel(this, channel, recvBufferSize, cmMeta.sendBufferSize);
-			}
-			
-			return cm;
 		}
 	}
 	
-//	private Channel accept(int channel, int recvBufferSize) throws IOException {
-//		return accept(channel, recvBufferSize, DEFAULT_ACCEPT_TIMEOUT, false, false);
-//	}
-	
-	public StreamChannel connectStreamChannel(int channel, int recvBufferSize, long timeout) {
-		
-		
-		return null;
+	public StreamChannel connectStreamChannel(int channel, int recvBufferSize, long timeout) throws IOException {
+		return (StreamChannel) connect(channel, recvBufferSize, timeout, false);
 	}
 	
 	class Demultiplexer implements Runnable {
 
-		final AtomicBoolean signal = new AtomicBoolean();
+		//final AtomicBoolean signal = new AtomicBoolean();
 		
 		public Demultiplexer() {
 			Thread handle = new Thread(this);
@@ -259,29 +266,70 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 					// process packet
 					synchronized(mutex) {
 						try {
-							
-							
+							cmMeta.proc = proc;
 							
 							if ( (flags&FLAG_MCL)!=0 ) {
 								close();
 							}
 							
-							if ((flags&FLAG_RST)!=0) {
-								if ( (cmMeta.state&(STATE_CONNECTING|STATE_ACCEPTING)) != 0 ) {
-									
-								}
+//							static final int FLAG_NULL = 0x0;
+//							static final int FLAG_SYN = 0x1;
+//							static final int FLAG_CLI = 0x2;
+//							static final int FLAG_MSG = 0x4; // message mode
+//							static final int FLAG_RST = 0x8;
+//							static final int FLAG_KAL = 0x10;
+//							static final int FLAG_OCL = 0x20;
+//							static final int FLAG_ICL = 0x40;
+//							static final int FLAG_IOCL = FLAG_ICL|FLAG_OCL;
+//							static final int FLAG_MCL = 0x80;
+							
+							switch (flags) {
+							case FLAG_SYN:
+							case FLAG_SYN|FLAG_CLI:
+							case FLAG_SYN|FLAG_MSG:
+							case FLAG_SYN|FLAG_CLI|FLAG_MSG:
+								break;
+							
+							case FLAG_RST:
+								break;
+								
+							case FLAG_KAL:
+								break;
+								
+							case FLAG_OCL:
+								
+								break;
+								
+							case FLAG_ICL:
+								
+								break;
+							
+							case FLAG_IOCL:
+								
+								break;
+								
+							case FLAG_MCL:
+								break;
+								
+							default:
+								assert(false):"unknown flag combination";
+								break;
 							}
 							
-							if ((flags&FLAG_SYN)!=0&& (cmMeta.state & (STATE_CONNECTING|STATE_ACCEPTING|STATE_LISTENING))!=0 ) {
-								final AtomicLong timer = new AtomicLong();
-								while (!signal.compareAndSet(true, false)) {
+							
+							if (cmMeta.state == STATE_ESTABLISHED) {
+								cmMeta.ptr.feed(recvBuffer, 8, len);
+							}
+							
+							
+							
+							final AtomicLong timer = new AtomicLong();
+							if ((cmMeta.state&LINGERING_STATES)!=0) {
+								cmMeta.nextPacketRead.set(true);
+								while ((cmMeta.state&LINGERING_STATES) != 0) {
 									linger(0, timer);
 								}
-								cmMeta.signal.set(true);
 							}
-						
-							
-							
 							
 						} finally {
 							mutex.notifyAll();
@@ -292,6 +340,22 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 				closeQuietly();
 			}
 		}
+		
+		void resetChannel(int channel) {
+			ChannelMetadata cmMeta = getCM(channel);
+			
+			assert(Thread.holdsLock(mutex));
+			cmMeta.reset = true;
+			if (cmMeta.ptr!=null) cmMeta.ptr.closeQuietly();
+		}
+		
+		void sendReset(int channel) throws IOException {
+			getCM(channel);
+			
+			assert(Thread.holdsLock(mutex));
+			writePacket(channel, 0, FLAG_RST);
+		}
+		
 	}
 
 	public boolean isClosed() {
@@ -314,23 +378,23 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	}
 	
 	class ChannelMetadata {
-		final AtomicBoolean signal = new AtomicBoolean();
+		final AtomicBoolean nextPacketRead = new AtomicBoolean();
 		Channel ptr;
 		long state = STATE_UNBOUND;
 		boolean reset;
-		int sendBufferSize;
+		int proc;
 		
 		void clear() {
-			signal.set(false);
+			nextPacketRead.set(false);
 			ptr = null;
 			state = STATE_UNBOUND;
 			reset = false;
-			sendBufferSize = 0;
+			proc = 0;
 		}
 	}
 
 	ChannelMetadata getCM(int index) {
-		if (!(0<=index&&index<cmMeta.length)) throw new IllegalArgumentException("invalid channel "+index); 
+		 
 		ChannelMetadata cm = cmMeta[index];
 		if (cm==null) throw new NullPointerException();
 		return cm;
@@ -356,6 +420,10 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		}
 	}
 	
+	private void validChannel(int channel) {
+		if (!(0<=channel&&channel<cmMeta.length)) throw new IllegalArgumentException("invalid channel "+channel);
+	}
+	
 	private static void validBufferSize(int recvBufferSize) {
 		if (!(0<recvBufferSize&&recvBufferSize<=0xffffff)) throw new IllegalArgumentException("bufferSize must fall within 1 and 16777215 inclusive");
 	}
@@ -378,8 +446,8 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	@Override
 	public DatagramPacketChannel acceptDatagramPacketChannel(int channel,
 			int bufferSize, long timeout, boolean recurring) throws IOException {
-		// TODO Auto-generated method stub
-		return null;
+		
+		return (DatagramPacketChannel) accept(channel, bufferSize, timeout, true, recurring);
 	}
 
 	@Override
@@ -406,8 +474,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	@Override
 	public StreamChannel acceptStreamChannel(int channel, int bufferSize,
 			long timeout, boolean recurring) throws IOException {
-		// TODO Auto-generated method stub
-		return null;
+		return (StreamChannel) accept(channel, bufferSize, timeout, false, recurring);
 	}
 
 	@Override
