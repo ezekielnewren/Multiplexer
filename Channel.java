@@ -5,13 +5,14 @@ import java.io.IOException;
 
 abstract class Channel implements Closeable {
 
-	long state;
+	private long state;
 	
 	final Multiplexer home;
 	final int channel;
 	final Object mutex;
 	final int recvBufferSize;
 	final int sendBufferSize;
+	final Multiplexer.ChannelMetadata cmMeta;
 	
 	final ByteArrayCircularBuffer window;
 	
@@ -30,6 +31,7 @@ abstract class Channel implements Closeable {
 		this.sendBufferSize = sendBufferSize;
 		window = new ByteArrayCircularBuffer(recvBufferSize);
 		state = Multiplexer.STATE_ESTABLISHED;
+		cmMeta = home.getCM(channel);
 	}
 
 	public int getChannelID() {
@@ -44,46 +46,57 @@ abstract class Channel implements Closeable {
 	
 	public boolean isClosed() {
 		synchronized(mutex) {
-			return localInputClosed&&localOutputClosed&&remoteOutputClosed;
+			return state==Multiplexer.STATE_CHANNEL_CLOSED;
+			//return localInputClosed&&localOutputClosed&&remoteOutputClosed;
 		}
 	}
 	
 	protected void incWritten(int amount) {
-		synchronized(mutex) {
-			if (amount<0) throw new IllegalArgumentException();
-			if (written+amount>sendBufferSize) throw new IllegalArgumentException();
-			written += amount;
-		}
+		assert(Thread.holdsLock(mutex));
+		
+		if (amount<0) throw new IllegalArgumentException();
+		if (written+amount>sendBufferSize) throw new IllegalArgumentException();
+		written += amount;
 	}
 	
 	void decWritten(int amount) {
-		synchronized(mutex) {
-			written -= amount;
-		}
+		assert(Thread.holdsLock(mutex));
+		
+		written -= amount;
 	}
 	
 	protected void incProcessed(int amount) {
-		synchronized(mutex) {
-			processed += amount;
-		}
+		assert(Thread.holdsLock(mutex));
+		
+		processed += amount;
 	}
 	
 	private int clearProcessed() {
-		synchronized(mutex) {
-			int x = processed;
-			processed = 0;
-			return x;
-		}
+		assert(Thread.holdsLock(mutex));
+		
+		int x = processed;
+		processed = 0;
+		return x;
 	}
 	
 	void feed(byte[] b, int off, int len) throws IOException {
+		assert(Thread.holdsLock(mutex));
+		
 		window.write(b, off, len);
 	}
 	
 	void writePacket(byte[] b, int off, int len) throws IOException {
+		assert(Thread.holdsLock(mutex));
+		
 		home.writePacket(channel, clearProcessed(), b, off, len, Multiplexer.FLAG_NULL);
 	}
 	
+	void setState(int newState) {
+		assert(Thread.holdsLock(mutex));
+		
+		state = newState;
+		if (newState!=Multiplexer.STATE_CHANNEL_CLOSED) cmMeta.state = newState;
+	}
 	
 	@Override
 	public void close() {
