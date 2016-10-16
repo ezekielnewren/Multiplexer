@@ -3,8 +3,10 @@ package com.github.ezekielnewren.net.multiplexer;
 import java.io.Closeable;
 import java.io.IOException;
 
-class Channel implements Closeable {
+abstract class Channel implements Closeable {
 
+	long state;
+	
 	final Multiplexer home;
 	final int channel;
 	final Object mutex;
@@ -27,8 +29,13 @@ class Channel implements Closeable {
 		this.recvBufferSize = recvBufferSize;
 		this.sendBufferSize = sendBufferSize;
 		window = new ByteArrayCircularBuffer(recvBufferSize);
+		state = Multiplexer.STATE_ESTABLISHED;
 	}
 
+	public int getChannelID() {
+		return channel;
+	}
+	
 	public boolean isConnectionClosed() {
 		synchronized(mutex) {
 			return localOutputClosed&&remoteOutputClosed;
