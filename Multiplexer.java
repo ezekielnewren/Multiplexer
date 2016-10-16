@@ -7,6 +7,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.BitSet;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.CRC32;
 
 public class Multiplexer {
@@ -55,7 +56,7 @@ public class Multiplexer {
 		output = (os instanceof DataOutputStream)?(DataOutputStream)os:new DataOutputStream(os);
 		
 		for (int i=0; i<prePasvOpen.length; i++) {
-			validChannel(prePasvOpen[i]);
+			bind(prePasvOpen[i]);
 		}
 		
 		for (int i=0; i<cmMeta.length; i++) {
@@ -112,42 +113,69 @@ public class Multiplexer {
 	}
 
 	private void bind(int channel) throws IOException {
-		validChannel(channel);
-		
+		// check the arguments and state
+		ChannelMetadata cmMeta = getCM(channel);
+
 		assert(Thread.holdsLock(mutex));
 		if (channelBound.get(channel)) throw new ChannelBindException();
-		ChannelMetadata cmMeta = getCM(channel);
+		if (cmMeta.state != STATE_UNBOUND) throw new IllegalStateException();
+		
+		
 		cmMeta.clear();
+		channelBound.set(channel);
 		cmMeta.state = STATE_BOUND;
 	}
 	
-	private Channel connect(int channel, int recvBufferSize, long timeout, boolean messageMode) throws IOException {
-		valid(channel, recvBufferSize);
-		if (timeout<0) throw new IllegalArgumentException("timeout cannot be negative");
+	private void unbind(int channel) throws IOException {
+		ChannelMetadata cmMeta = getCM(channel);
+
+		assert(Thread.holdsLock(mutex));
+		if (cmMeta.state!=STATE_CHANNEL_CLOSED) throw new IllegalStateException();
 		
+		channelBound.clear(channel);
+		cmMeta.clear();
+	}
+	
+	private Channel connect(int channel, int recvBufferSize, long timeout, boolean messageMode) throws IOException {
+		validBufferSize(recvBufferSize);
+		if (timeout<0) throw new IllegalArgumentException("timeout cannot be negative");
+		ChannelMetadata cmMeta = getCM(channel);
 		
 		synchronized(mutex) {
-			
-			bind(channel);
-			
-			ChannelMetadata cmMeta = getCM(channel); 
-			
 			try {
+				bind(channel);
+				cmMeta.state = STATE_CONNECTING;
+				
+				// send synchronize
 				writePacket(channel, recvBufferSize, FLAG_SYN|FLAG_CLI);
-				while (cmMeta.signal.compareAndSet(true, false)) {
-					try{mutex.wait();}catch(InterruptedException e){Thread.currentThread().interrupt();}
+				
+				// wait for response
+				final AtomicLong timer = new AtomicLong();
+				while (timer.get()<timeout && cmMeta.signal.compareAndSet(true, false)) {
+					linger(timeout, timer);
+				}
+				
+				// if timedout throw and error
+				if (timer.get()>timeout) {
+					cmMeta.state = STATE_CHANNEL_CLOSED;
+					unbind(channel);
+					throw new ChannelTimeoutException();
 				}
 				
 				assert(segregator.channel==channel);
+
+				if ((segregator.flags&FLAG_RST)!=0) {
+					cmMeta.state = STATE_CHANNEL_CLOSED;
+				}
 				
 				Channel cm;
-				
 				if (!messageMode) {
 					cm = new DatagramPacketChannel(this, channel, recvBufferSize, segregator.proc);
 				} else {
 					cm = new StreamChannel(this, channel, recvBufferSize, segregator.proc);
 				}
-				
+				cmMeta.ptr = cm;
+				cmMeta.state = STATE_ESTABLISHED;
 				
 				
 				return cm;
@@ -214,8 +242,26 @@ public class Multiplexer {
 					long realCRC = crc.getValue();
 					if (packetCRC!=realCRC) throw new IOException("Malformed packet");
 
+					ChannelMetadata cmMeta = getCM(channel);
+					
 					// process packet
 					synchronized(mutex) {
+						if ( (flags&FLAG_MCL)!=0 ) {
+							close();
+						}
+						
+						if ((flags&FLAG_SYN)!=0&& (cmMeta.state & (STATE_CONNECTING|STATE_ACCEPTING))!=0 ) {
+							try {
+								final AtomicLong timer = new AtomicLong();
+								while (!signal.compareAndSet(true, false)) {
+									linger(0, timer);
+								}
+								
+								
+							} finally {
+								mutex.notifyAll();
+							}
+						}
 						
 					}
 				}
@@ -226,17 +272,23 @@ public class Multiplexer {
 	}
 
 	public boolean isClosed() {
-		return closed;
+		synchronized(mutex) {
+			return closed;
+		}
 	}
 
 	private void closeQuietly() {
-		
+		closed = true;
 	}
 	
-	ChannelMetadata getCM(int index) {
-		return cmMeta[index];
+	public void close() throws IOException {
+		synchronized(mutex) {
+			if (closed) return;
+			
+			
+			closed = true;
+		}
 	}
-	
 	
 	class ChannelMetadata {
 		final AtomicBoolean signal = new AtomicBoolean();
@@ -250,6 +302,11 @@ public class Multiplexer {
 		}
 	}
 
+	ChannelMetadata getCM(int index) {
+		ChannelMetadata cm = cmMeta[index];
+		if (cm==null) throw new NullPointerException();
+		return cm;
+	}
 
 	// read/write numbers
 	private static long bytesToNumber(byte[] num, int off, int len) {
@@ -271,16 +328,22 @@ public class Multiplexer {
 		}
 	}
 	
-	private static void validChannel(int channel) {
-		if (!(0<=channel&&channel<=0xffff)) throw new IllegalArgumentException();
-	}
-
 	private static void validBufferSize(int recvBufferSize) {
-		if (!(0<recvBufferSize&&recvBufferSize<=0xffffff)) throw new IllegalArgumentException("bufferSize must be between 1 and 16777215 inclusive");
+		if (!(0<recvBufferSize&&recvBufferSize<=0xffffff)) throw new IllegalArgumentException("bufferSize must fall within 1 and 16777215 inclusive");
 	}
 
-	private static void valid(int channel, int recvBufferSize) {
-		validChannel(channel);
-		validBufferSize(recvBufferSize);
+	long linger(long waitForMillis, final AtomicLong timer) {
+		if (timer.get()<0) throw new IllegalArgumentException();
+		if (timer.get()>waitForMillis) return 0;
+		if (waitForMillis!=0) waitForMillis -= timer.get();
+		long beg = System.nanoTime();
+		try {
+			mutex.wait(waitForMillis);
+		} catch (InterruptedException ie) {
+			Thread.currentThread().interrupt();
+		}
+		long time = (System.nanoTime()-beg)/1000000;
+		timer.addAndGet(time);
+		return time;
 	}
 }
