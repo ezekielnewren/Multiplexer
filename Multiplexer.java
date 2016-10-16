@@ -376,79 +376,80 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	}
 
 	@Override
-	public Channel acceptDatagramPacketChannel(int channel, int bufferSize,
+	public DatagramPacketChannel acceptDatagramPacketChannel(int channel,
+			int bufferSize, long timeout, boolean recurring) throws IOException {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public DatagramPacketChannel acceptDatagramPacketChannel(int channel,
+			int bufferSize, boolean recurring) throws IOException {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public DatagramPacketChannel acceptDatagramPacketChannel(int channel,
+			int bufferSize, long timeout) throws IOException {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public DatagramPacketChannel acceptDatagramPacketChannel(int channel,
+			int bufferSize) throws IOException {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public StreamChannel acceptStreamChannel(int channel, int bufferSize,
 			long timeout, boolean recurring) throws IOException {
 		// TODO Auto-generated method stub
 		return null;
 	}
 
 	@Override
-	public Channel acceptDatagramPacketChannel(int channel, int bufferSize,
+	public StreamChannel acceptStreamChannel(int channel, int bufferSize,
 			boolean recurring) throws IOException {
 		// TODO Auto-generated method stub
 		return null;
 	}
 
 	@Override
-	public Channel acceptDatagramPacketChannel(int channel, int bufferSize,
+	public StreamChannel acceptStreamChannel(int channel, int bufferSize,
 			long timeout) throws IOException {
 		// TODO Auto-generated method stub
 		return null;
 	}
 
 	@Override
-	public Channel acceptDatagramPacketChannel(int channel, int bufferSize)
+	public StreamChannel acceptStreamChannel(int channel, int bufferSize)
 			throws IOException {
 		// TODO Auto-generated method stub
 		return null;
 	}
 
 	@Override
-	public Channel acceptStreamChannel(int channel, int bufferSize,
-			long timeout, boolean recurring) throws IOException {
-		// TODO Auto-generated method stub
-		return null;
-	}
-
-	@Override
-	public Channel acceptStreamChannel(int channel, int bufferSize,
-			boolean recurring) throws IOException {
-		// TODO Auto-generated method stub
-		return null;
-	}
-
-	@Override
-	public Channel acceptStreamChannel(int channel, int bufferSize, long timeout)
-			throws IOException {
-		// TODO Auto-generated method stub
-		return null;
-	}
-
-	@Override
-	public Channel acceptStreamChannel(int channel, int bufferSize)
-			throws IOException {
-		// TODO Auto-generated method stub
-		return null;
-	}
-
-	@Override
-	public Channel connectDatagramPacketChannel(int channel,
+	public DatagramPacketChannel connectDatagramPacketChannel(int channel,
 			int recvBufferSize, long timeout) throws IOException {
 		// TODO Auto-generated method stub
 		return null;
 	}
 
 	@Override
-	public Channel connectDatagramPacketChannel(int channel, int bufferSize)
-			throws IOException {
+	public DatagramPacketChannel connectDatagramPacketChannel(int channel,
+			int bufferSize) throws IOException {
 		// TODO Auto-generated method stub
 		return null;
 	}
 
 	@Override
-	public Channel connectStreamChannel(int channel, int bufferSize)
+	public StreamChannel connectStreamChannel(int channel, int bufferSize)
 			throws IOException {
 		// TODO Auto-generated method stub
 		return null;
 	}
+
 }
