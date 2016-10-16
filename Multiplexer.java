@@ -12,7 +12,6 @@ import java.util.zip.CRC32;
 
 public class Multiplexer {
 
-//	private final Multiplexer home = this;
 	private final DataInputStream input;
 	private final DataOutputStream output;
 	private final byte[] recvBuffer = new byte[8+0xffff+4];
@@ -325,6 +324,8 @@ public class Multiplexer {
 			signal.set(false);
 			ptr = null;
 			state = STATE_UNBOUND;
+			reset = false;
+			sendBufferSize = 0;
 		}
 	}
 
