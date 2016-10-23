@@ -7,8 +7,8 @@ public class DatagramPacketChannel extends Channel {
 
 	final FastQueue packetList = new FastQueue();
 	
-	DatagramPacketChannel(Multiplexer inst, int channel, int recvBufferSize, int sendBufferSize) {
-		super(inst, channel, recvBufferSize, sendBufferSize);
+	DatagramPacketChannel(Multiplexer inst, int channel, int recvBufferSize, int sendBufferSize, final Object mutex) {
+		super(inst, channel, recvBufferSize, sendBufferSize, mutex);
 	}
 
 	public void receive(DatagramPacket p) throws IOException {
@@ -30,7 +30,7 @@ public class DatagramPacketChannel extends Channel {
 	public void send(DatagramPacket p) throws IOException {
 		synchronized(mutex) {
 			super.writePacket(p.getData(), p.getOffset(), p.getLength());
-			super.incWritten(p.getLength());
+			super.withdrawCredit(p.getLength());
 		}
 	}
 	

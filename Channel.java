@@ -2,12 +2,14 @@ package com.github.ezekielnewren.net.multiplexer;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicLong;
 
 abstract class Channel implements Closeable {
 
-	private long state;
+	long state;
 	
 	final Multiplexer home;
+	final Channel parent = this;
 	final int channel;
 	final Object mutex;
 	final int recvBufferSize;
@@ -23,10 +25,10 @@ abstract class Channel implements Closeable {
 	int written = 0;
 	int processed = 0;
 	
-	Channel(Multiplexer inst, int channel, int recvBufferSize, int sendBufferSize) {
+	Channel(Multiplexer inst, int channel, int recvBufferSize, int sendBufferSize, final Object mutex) {
 		this.home = inst;
 		this.channel = channel;
-		mutex = home.mutex;
+		this.mutex = mutex;
 		this.recvBufferSize = recvBufferSize;
 		this.sendBufferSize = sendBufferSize;
 		window = new ByteArrayCircularBuffer(recvBufferSize);
@@ -51,7 +53,13 @@ abstract class Channel implements Closeable {
 		}
 	}
 	
-	protected void incWritten(int amount) {
+	int getCredit() {
+		assert(Thread.holdsLock(mutex));
+		
+		return sendBufferSize-written;
+	}
+	
+	void withdrawCredit(int amount) {
 		assert(Thread.holdsLock(mutex));
 		
 		if (amount<0) throw new IllegalArgumentException();
@@ -59,19 +67,19 @@ abstract class Channel implements Closeable {
 		written += amount;
 	}
 	
-	void decWritten(int amount) {
+	void depositCredit(int amount) {
 		assert(Thread.holdsLock(mutex));
 		
 		written -= amount;
 	}
 	
-	protected void incProcessed(int amount) {
+	void incProcessed(int amount) {
 		assert(Thread.holdsLock(mutex));
 		
 		processed += amount;
 	}
 	
-	private int clearProcessed() {
+	int clearProcessed() {
 		assert(Thread.holdsLock(mutex));
 		
 		int x = processed;
@@ -116,7 +124,24 @@ abstract class Channel implements Closeable {
 	
 	@Override
 	public void close() {
-		
+		synchronized(mutex) {
+			try {
+				final AtomicLong timer = new AtomicLong();
+				while (state==Multiplexer.STATE_CHANNEL_CLOSING) home.linger(0, timer);
+				
+				if (state==Multiplexer.STATE_CHANNEL_CLOSED) return;
+				state = Multiplexer.STATE_CHANNEL_CLOSING;
+				
+				
+				
+				
+				
+				
+				state = Multiplexer.STATE_CHANNEL_CLOSED;
+			} finally {
+				mutex.notifyAll();
+			}
+		}
 	}
 
 	void closeQuietly() {
