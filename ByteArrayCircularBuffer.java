@@ -12,12 +12,15 @@ public class ByteArrayCircularBuffer {
 	private final Object fieldLock = new Object();
 	
 	// data
+	private final int FIRST_INDEX;
+	private final int LAST_INDEX;
 	private final byte[] cbuff;
+	private boolean isUsingSharedBuffer;
 	
 	// pointers
 	private final ByteArrayCircularBuffer inst;
-	private int rp = 0;
-	private int wp = 0;
+	private int rp;
+	private int wp;
 	private int readable = 0;
 
 	// flags
@@ -33,16 +36,28 @@ public class ByteArrayCircularBuffer {
 	}
 
 	public ByteArrayCircularBuffer(int cbuffSize) {
-		this(new byte[cbuffSize]);
+		this(new byte[cbuffSize], 0, cbuffSize-1);
+		isUsingSharedBuffer = false;
 	}
 
-	public ByteArrayCircularBuffer(byte[] reusableByteArray) {
+	public ByteArrayCircularBuffer(byte[] reusableByteArray, int firstIndex, int lastIndex) {
 		if (reusableByteArray==null) throw new NullPointerException();
-		if (reusableByteArray.length==0) throw new IllegalArgumentException("buffer size must be at least 1");
+		if (!( (0<=firstIndex&&firstIndex<reusableByteArray.length)
+				&& (firstIndex<=lastIndex&&lastIndex<reusableByteArray.length)
+				)) throw new IndexOutOfBoundsException();
+		if (lastIndex-firstIndex+1<1) throw new IllegalArgumentException("buffer size must be at least 1");
 		cbuff = reusableByteArray;
+		FIRST_INDEX = firstIndex;
+		LAST_INDEX = lastIndex;
+		rp = wp = FIRST_INDEX;
 		is = new CircularBufferInputStream();
 		os = new CircularBufferOutputStream();
 		inst = this;
+		isUsingSharedBuffer = true;
+	}
+	
+	public ByteArrayCircularBuffer(byte[] reusableByteArray) {
+		this(reusableByteArray, 0, reusableByteArray.length-1);
 	}
 	
 	public int available() throws IOException {
@@ -55,7 +70,7 @@ public class ByteArrayCircularBuffer {
 	public int free() throws IOException {
 		if (outputClosed) throw new IOException("OutputStream Closed");
 		synchronized(fieldLock) {
-			return cbuff.length-readable;
+			return getBufferSize()-readable;
 		}
 	}
 
@@ -69,7 +84,7 @@ public class ByteArrayCircularBuffer {
 	}
 	
 	public int getBufferSize() {
-		return cbuff.length;
+		return LAST_INDEX-FIRST_INDEX+1;
 	}
 
 	public int read() throws IOException {
@@ -172,7 +187,7 @@ public class ByteArrayCircularBuffer {
 				int wp = this.wp;
 				int write = Math.min(free, len-written);
 				
-				int end = cbuff.length-wp;
+				int end = LAST_INDEX-wp+1;
 				if (write <= end) {
 					System.arraycopy(b, off+written, cbuff, wp, write);
 				} else {
@@ -256,7 +271,7 @@ public class ByteArrayCircularBuffer {
 
 	private void incReadable(int amount) {
 		synchronized(fieldLock) {
-			wp = (wp+amount)%cbuff.length;
+			wp = FIRST_INDEX+(((wp-FIRST_INDEX)+amount)%getBufferSize());
 			readable += amount;
 			fieldLock.notifyAll();
 		}
@@ -264,9 +279,12 @@ public class ByteArrayCircularBuffer {
 	
 	private void decReadable(int amount) {
 		synchronized(fieldLock) {
-			rp = (rp+amount)%cbuff.length;
+			rp =  FIRST_INDEX+(((rp-FIRST_INDEX)+amount)%getBufferSize());
 			readable -= amount;
 			fieldLock.notifyAll();
 		}
 	}
 }
+
+
+
