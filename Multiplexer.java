@@ -12,24 +12,15 @@ import java.util.zip.CRC32;
 
 public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 
-	private final Multiplexer home = this;
-	private final DataInputStream input;
-	private final DataOutputStream output;
-	private final byte[] recvBuffer = new byte[8+0xffff+4];
-	private final byte[] sendBuffer = new byte[8+4+1];
-	private final CRC32 sendCRC = new CRC32();
-	private final BitSet channelBound = new BitSet();
-	private final ChannelMetadata[] cmMeta = new ChannelMetadata[0x10000];
-	
-	private boolean closed = false;
-	
-	final Demultiplexer segregator;
-	final Object mutex = new Object();
-	
+	// constants
+	public static final long DEFAULT_ACCEPT_TIMEOUT = 0;
+	public static final long DEFAULT_CONNECTION_TIMEOUT = 60000;
+	public static final int MAX_BUFFER_SIZE = 0xffffff;
+	  
 	static final int FLAG_NULL = 0x0;
 	static final int FLAG_SYN = 0x1;
 	static final int FLAG_CLI = 0x2;
-	static final int FLAG_MSG = 0x4; // message mode
+	static final int FLAG_MSG = 0x4;
 	static final int FLAG_RST = 0x8;
 	static final int FLAG_KAL = 0x10;
 	static final int FLAG_OCL = 0x20;
@@ -37,6 +28,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	static final int FLAG_IOCL = FLAG_ICL|FLAG_OCL;
 	static final int FLAG_MCL = 0x80;
 
+	// Channel states
 	private static int i = 0;
 	static final long STATE_UNBOUND = (1<<i++);
 	static final long STATE_BOUND = (1<<i++);
@@ -48,9 +40,24 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	static final long STATE_CHANNEL_CLOSED = (1<<i++);
 
 	static final long LINGERING_STATES = STATE_CONNECTING|STATE_ACCEPTING|STATE_LISTENING|STATE_CHANNEL_CLOSING;
+
+	// Multiplexer states
+	static final long STATE_OPEN = (1<<i++);
+	static final long STATE_CLOSING = (1<<i++);
+	static final long STATE_CLOSED = (1<<i++);
 	
-	public static final long DEFAULT_ACCEPT_TIMEOUT = Long.MAX_VALUE;
-	public static final long DEFAULT_CONNECTION_TIMEOUT = 60000;
+	// per instance constants
+	private final Multiplexer home = this;
+	private final DataInputStream input;
+	private final DataOutputStream output;
+	private final byte[] recvBuffer = new byte[8+0xffff+4];
+	private final byte[] sendBuffer = new byte[8+4+1];
+	private final CRC32 sendCRC = new CRC32();
+	private final BitSet channelBound = new BitSet();
+	private final ChannelMetadata[] cmMeta = new ChannelMetadata[0x10000];
+	private final Object mutex = new Object();
+
+	private long state = STATE_OPEN;
 	
 	public Multiplexer(InputStream is, OutputStream os, int... prePasvOpen) throws IOException {
 		input = (is instanceof DataInputStream)?(DataInputStream)is:new DataInputStream(is);
@@ -62,12 +69,12 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 
 		synchronized(mutex) {
 			for (int i=0; i<prePasvOpen.length; i++) {
-				bind(prePasvOpen[i]);
+				bind(prePasvOpen[i], false);
 				getCM(prePasvOpen[i]).state = STATE_LISTENING;
 			}
 		}
 		
-		segregator = new Demultiplexer();
+		new Demultiplexer();
 	}
 
 	void writePacket(int channel, int processed, byte[] b, int off, int len, int flags) throws IOException {
@@ -117,10 +124,12 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	}
 	
 	private boolean isBound(int channel) {
+		
+		assert(Thread.holdsLock(mutex));
 		return channelBound.get(channel);
 	}
 
-	private void bind(int channel) throws IOException {
+	private void bind(int channel, boolean recurring) throws IOException {
 		// check the arguments and state
 		ChannelMetadata cmMeta = getCM(channel);
 
@@ -132,6 +141,10 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		cmMeta.clear();
 		channelBound.set(channel);
 		cmMeta.state = STATE_BOUND;
+		if (recurring) {
+			cmMeta.recurring = true;
+			cmMeta.state = STATE_LISTENING;
+		}
 	}
 	
 	private void unbind(int channel) throws IOException {
@@ -141,7 +154,11 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		if (cmMeta.state!=STATE_CHANNEL_CLOSED) throw new IllegalStateException();
 		
 		channelBound.clear(channel);
-		cmMeta.clear();
+		if (cmMeta.recurring) {
+			bind(channel, true);
+		} else {
+			cmMeta.clear();
+		}
 	}
 	
 	private Channel connect(int channel, int recvBufferSize, long timeout, boolean messageMode) throws IOException {
@@ -151,11 +168,11 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		
 		synchronized(mutex) {
 			try {
-				bind(channel);
+				bind(channel, false);
 				cmMeta.state = STATE_CONNECTING;
 				
 				// send synchronize
-				writePacket(channel, recvBufferSize, FLAG_SYN|FLAG_CLI);
+				writePacket(channel, recvBufferSize, FLAG_SYN|FLAG_CLI|( messageMode?FLAG_MSG:FLAG_NULL ));
 				
 				// wait for response
 				final AtomicLong timer = new AtomicLong();
@@ -178,9 +195,9 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 				
 				Channel cm;
 				if (messageMode) {
-					cm = new DatagramPacketChannel(this, channel, recvBufferSize, cmMeta.proc);
+					cm = new DatagramPacketChannel(this, channel, recvBufferSize, cmMeta.proc, mutex);
 				} else {
-					cm = new StreamChannel(this, channel, recvBufferSize, cmMeta.proc);
+					cm = new StreamChannel(this, channel, recvBufferSize, cmMeta.proc, mutex);
 				}
 				cmMeta.ptr = cm;
 				cmMeta.state = STATE_ESTABLISHED;
@@ -201,33 +218,38 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		synchronized(mutex) {
 			try {
 				if (cmMeta.state!=STATE_LISTENING) {
-					bind(channel);
+					bind(channel, recurring);
 				}
 				cmMeta.state = STATE_ACCEPTING;
 	
+				final AtomicLong timer = new AtomicLong();
+				while (!cmMeta.nextPacketRead.compareAndSet(true, false)) linger(timeout, timer);
+				if (cmMeta.reset) throw new ChannelResetException();
+				writePacket(channel, recvBufferSize, FLAG_SYN|( messageMode?FLAG_MSG:FLAG_NULL ));
+				
 				Channel cm;
 				if (messageMode) {
-					cm = new DatagramPacketChannel(this, channel, recvBufferSize, cmMeta.proc);
+					cm = new DatagramPacketChannel(this, channel, recvBufferSize, cmMeta.proc, mutex);
 				} else {
-					cm = new StreamChannel(this, channel, recvBufferSize, cmMeta.proc);
+					cm = new StreamChannel(this, channel, recvBufferSize, cmMeta.proc, mutex);
 				}
 				
+				cmMeta.state = STATE_ESTABLISHED;
 				return cm;
 			} finally {
-				cmMeta.nextPacketRead.set(true);
 				mutex.notifyAll();
+				
+				// if this is true something has gone wrong
+				if (cmMeta.state!=STATE_ESTABLISHED) {
+					cmMeta.state = STATE_CHANNEL_CLOSED;
+					unbind(channel);
+				}
 			}
 		}
 	}
 	
-	public StreamChannel connectStreamChannel(int channel, int recvBufferSize, long timeout) throws IOException {
-		return (StreamChannel) connect(channel, recvBufferSize, timeout, false);
-	}
-	
 	class Demultiplexer implements Runnable {
 
-		//final AtomicBoolean signal = new AtomicBoolean();
-		
 		public Demultiplexer() {
 			Thread handle = new Thread(this);
 			handle.setName(Thread.currentThread().getName()+"segregator");
@@ -263,6 +285,17 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 
 					ChannelMetadata cmMeta = getCM(channel);
 					
+//					static final int FLAG_NULL = 0x0;
+//					static final int FLAG_SYN = 0x1;
+//					static final int FLAG_CLI = 0x2;
+//					static final int FLAG_MSG = 0x4; // message mode
+//					static final int FLAG_RST = 0x8;
+//					static final int FLAG_KAL = 0x10;
+//					static final int FLAG_OCL = 0x20;
+//					static final int FLAG_ICL = 0x40;
+//					static final int FLAG_IOCL = FLAG_ICL|FLAG_OCL;
+//					static final int FLAG_MCL = 0x80;
+					
 					// process packet
 					synchronized(mutex) {
 						try {
@@ -272,16 +305,6 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 								close();
 							}
 							
-//							static final int FLAG_NULL = 0x0;
-//							static final int FLAG_SYN = 0x1;
-//							static final int FLAG_CLI = 0x2;
-//							static final int FLAG_MSG = 0x4; // message mode
-//							static final int FLAG_RST = 0x8;
-//							static final int FLAG_KAL = 0x10;
-//							static final int FLAG_OCL = 0x20;
-//							static final int FLAG_ICL = 0x40;
-//							static final int FLAG_IOCL = FLAG_ICL|FLAG_OCL;
-//							static final int FLAG_MCL = 0x80;
 							
 							switch (flags) {
 							case FLAG_SYN:
@@ -312,7 +335,8 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 								break;
 								
 							default:
-								assert(false):"unknown flag combination";
+								System.err.println("unknown flag combination");
+								sendReset(channel);
 								break;
 							}
 							
@@ -360,20 +384,31 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 
 	public boolean isClosed() {
 		synchronized(mutex) {
-			return closed;
+			return state==STATE_CLOSED;
 		}
 	}
 
 	private void closeQuietly() {
-		closed = true;
+		synchronized(mutex) {
+			state = STATE_CLOSED;
+		}
 	}
 	
 	public void close() throws IOException {
 		synchronized(mutex) {
-			if (closed) return;
+			final AtomicLong timer = new AtomicLong();
+			while (state==STATE_CLOSING) linger(0, timer);
 			
-			
-			closed = true;
+			if (state==STATE_CLOSED) return;
+			state = STATE_CLOSING;
+			try {
+
+				
+				
+			} finally {
+				mutex.notifyAll();
+				state = STATE_CLOSED;
+			}
 		}
 	}
 	
@@ -381,20 +416,24 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		final AtomicBoolean nextPacketRead = new AtomicBoolean();
 		Channel ptr;
 		long state = STATE_UNBOUND;
+		boolean messageMode;
 		boolean reset;
+		boolean recurring;
 		int proc;
 		
 		void clear() {
 			nextPacketRead.set(false);
 			ptr = null;
 			state = STATE_UNBOUND;
+			messageMode = false;
 			reset = false;
+			recurring = false;
 			proc = 0;
 		}
 	}
 
 	ChannelMetadata getCM(int index) {
-		 
+		
 		ChannelMetadata cm = cmMeta[index];
 		if (cm==null) throw new NullPointerException();
 		return cm;
@@ -428,9 +467,9 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		if (!(0<recvBufferSize&&recvBufferSize<=0xffffff)) throw new IllegalArgumentException("bufferSize must fall within 1 and 16777215 inclusive");
 	}
 
-	long linger(long waitForMillis, final AtomicLong timer) {
-		if (timer.get()<0) throw new IllegalArgumentException();
-		if (timer.get()>waitForMillis) return 0;
+	void linger(long waitForMillis, final AtomicLong timer) {
+		if ((waitForMillis|timer.get())<0) throw new IllegalArgumentException(); 
+		if (timer.get()>waitForMillis) return;
 		if (waitForMillis!=0) waitForMillis -= timer.get();
 		long beg = System.nanoTime();
 		try {
@@ -438,85 +477,71 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		} catch (InterruptedException ie) {
 			Thread.currentThread().interrupt();
 		}
-		long time = (System.nanoTime()-beg)/1000000;
-		timer.addAndGet(time);
-		return time;
+		timer.addAndGet((System.nanoTime()-beg)/1000000);
 	}
 
-	@Override
+	
+	// acceptDatagramPacketChannel
+	public DatagramPacketChannel acceptDatagramPacketChannel(int channel,
+			int bufferSize) throws IOException {
+		return (DatagramPacketChannel) accept(channel, bufferSize, DEFAULT_ACCEPT_TIMEOUT, true, false);
+	}
+	
+	public DatagramPacketChannel acceptDatagramPacketChannel(int channel,
+			int bufferSize, boolean recurring) throws IOException {
+		return (DatagramPacketChannel) accept(channel, bufferSize, DEFAULT_ACCEPT_TIMEOUT, true, recurring);
+	}
+	
+	public DatagramPacketChannel acceptDatagramPacketChannel(int channel,
+			int bufferSize, long timeout) throws IOException {
+		return (DatagramPacketChannel) accept(channel, bufferSize, DEFAULT_ACCEPT_TIMEOUT, true, false);
+	}
+	
 	public DatagramPacketChannel acceptDatagramPacketChannel(int channel,
 			int bufferSize, long timeout, boolean recurring) throws IOException {
-		
 		return (DatagramPacketChannel) accept(channel, bufferSize, timeout, true, recurring);
 	}
 
-	@Override
-	public DatagramPacketChannel acceptDatagramPacketChannel(int channel,
-			int bufferSize, boolean recurring) throws IOException {
-		// TODO Auto-generated method stub
-		return null;
+	// acceptStreamChannel
+	public StreamChannel acceptStreamChannel(int channel, int bufferSize)
+			throws IOException {
+		return (StreamChannel) accept(channel, bufferSize, DEFAULT_ACCEPT_TIMEOUT, false, false);
 	}
 
-	@Override
-	public DatagramPacketChannel acceptDatagramPacketChannel(int channel,
-			int bufferSize, long timeout) throws IOException {
-		// TODO Auto-generated method stub
-		return null;
+	public StreamChannel acceptStreamChannel(int channel, int bufferSize,
+			boolean recurring) throws IOException {
+		return (StreamChannel) accept(channel, bufferSize, DEFAULT_ACCEPT_TIMEOUT, false, false);
 	}
 
-	@Override
-	public DatagramPacketChannel acceptDatagramPacketChannel(int channel,
-			int bufferSize) throws IOException {
-		// TODO Auto-generated method stub
-		return null;
+	public StreamChannel acceptStreamChannel(int channel, int bufferSize,
+			long timeout) throws IOException {
+		return (StreamChannel) accept(channel, bufferSize, timeout, false, false);
 	}
-
-	@Override
+	
 	public StreamChannel acceptStreamChannel(int channel, int bufferSize,
 			long timeout, boolean recurring) throws IOException {
 		return (StreamChannel) accept(channel, bufferSize, timeout, false, recurring);
 	}
 
-	@Override
-	public StreamChannel acceptStreamChannel(int channel, int bufferSize,
-			boolean recurring) throws IOException {
-		// TODO Auto-generated method stub
-		return null;
-	}
-
-	@Override
-	public StreamChannel acceptStreamChannel(int channel, int bufferSize,
-			long timeout) throws IOException {
-		// TODO Auto-generated method stub
-		return null;
-	}
-
-	@Override
-	public StreamChannel acceptStreamChannel(int channel, int bufferSize)
-			throws IOException {
-		// TODO Auto-generated method stub
-		return null;
-	}
-
-	@Override
-	public DatagramPacketChannel connectDatagramPacketChannel(int channel,
-			int recvBufferSize, long timeout) throws IOException {
-		// TODO Auto-generated method stub
-		return null;
-	}
-
-	@Override
+	// connetDatagramChannel
 	public DatagramPacketChannel connectDatagramPacketChannel(int channel,
 			int bufferSize) throws IOException {
-		// TODO Auto-generated method stub
-		return null;
+		return (DatagramPacketChannel) connect(channel, bufferSize, DEFAULT_CONNECTION_TIMEOUT, true);
+	}
+	
+	public DatagramPacketChannel connectDatagramPacketChannel(int channel,
+			int recvBufferSize, long timeout) throws IOException {
+		return (DatagramPacketChannel) connect(channel, recvBufferSize, timeout, true);
 	}
 
-	@Override
+	// connectStreamChannel
 	public StreamChannel connectStreamChannel(int channel, int bufferSize)
 			throws IOException {
-		// TODO Auto-generated method stub
-		return null;
+		return (StreamChannel) connect(channel, bufferSize, DEFAULT_CONNECTION_TIMEOUT, false);
+	}
+	
+	public StreamChannel connectStreamChannel(int channel, int recvBufferSize, long timeout) throws IOException {
+		return (StreamChannel) connect(channel, recvBufferSize, timeout, false);
 	}
 
 }
