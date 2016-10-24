@@ -2,7 +2,14 @@ package com.github.ezekielnewren.net.multiplexer;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.security.DigestInputStream;
+import java.security.DigestOutputStream;
+import java.security.MessageDigest;
+import java.util.Random;
+import java.util.Scanner;
 import java.util.concurrent.atomic.AtomicLong;
+
+import com.github.ezekielnewren.io.*;
 
 import misc.Lib;
 
@@ -71,19 +78,103 @@ public class MuxDriver {
 	public static void cbTest() {
 		try {
 			
-		
-			byte[] buffer = new byte[15];
-			ByteArrayCircularBuffer cb = new ByteArrayCircularBuffer(buffer, 5, 9);
+			byte[] cbuff = new byte[150000];
+			ByteArrayCircularBuffer inst = new ByteArrayCircularBuffer(cbuff, 6, 6+4*8192-1);
 			byte[] data = "abcde".getBytes();
 			
-			cb.write(buffer, 0, 2);
-			cb.read(buffer, 0, 2);
+			int total = 10000;
+			final long seed = 63873;
+			final Random r = new Random(seed);
 			
-			cb.write(data, 0, 5);
+//			RandomInputStream ris = new RandomInputStream(r);
+//			Lib.copy(ris, inst.getOutputStream(), new byte[8192], inst.getBufferSize());
+			
+			long millis = 3*1000;
+			
+			Scanner stdin = new Scanner(System.in);
+			System.out.print("ready? y/n ");
+			stdin.nextLine();
+
+//			int count = 0;
+//			
+//			long beg,time;
+//			beg = System.nanoTime();
+//			while ( (time=(System.nanoTime()-beg)/1000000) < millis) {
+//				inst.write(0x40);
+//				inst.read();
+//				count += 2;
+//			}
+//
+//			System.out.println(SPEED.rateOverTime(count, time).toString(false));
+//			
+//			MessageDigest md = MessageDigest.getInstance("MD5");
+//			DigestOutputStream dos = new DigestOutputStream(new NullOutputStream(), md);
+//			
+//			Lib.copy(ris, dos, new byte[8192], total);
+//			dos.close();
+//			
+//			Lib.printBytesInHex(md.digest());
+			
+			
+			final Thread[] worker = new Thread[2];
+			
+			worker[0] = new Thread(new Runnable() {
+				public void run() {
+					try {
+						r.setSeed(seed);
+						RandomInputStream ris = new RandomInputStream(r);
+						
+						//byte[] b = new byte[8192];
+						
+						long count = 0;
+						
+						long beg,time;
+						beg = System.nanoTime();
+						Lib.copy(null, inst.getOutputStream(), new byte[8192], count=8000000000L);
+						inst.closeOutput();
+						time = (System.nanoTime()-beg)/1000000;
+						
+						System.out.println(SPEED.rateOverTime(count, time).toString(true));
+						
+						
+					} catch (Exception e) {
+						e.printStackTrace();
+					}
+				}
+			});
+			worker[0].setDaemon(true);
+			worker[0].setName("--client--");
+			
+			worker[1] = new Thread(new Runnable() {
+				public void run() {
+					try {
+						
+//						byte[] buff = new byte[8192];
+//						long total = 0;
+						
+						Lib.copy(inst.getInputStream(), null);
+						
+						
+					} catch (Exception e) {
+						e.printStackTrace();
+					}
+					
+				}
+			});
+			worker[1].setDaemon(true);
+			worker[1].setName("--server--");
+			
+			
+			worker[0].start();
+			worker[1].start();
+			
+			
+			worker[0].join();
+			worker[1].join();			
 			
 			
 			Lib.doNothing();
-		} catch (IOException e) {
+		} catch (Exception e) {
 			e.printStackTrace();
 		}
 	}
