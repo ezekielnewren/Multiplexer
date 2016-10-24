@@ -23,7 +23,7 @@ abstract class Channel implements Closeable {
 	boolean remoteOutputClosed = false;
 
 	int written = 0;
-	int processed = 0;
+	int credit = 0;
 	
 	Channel(Multiplexer inst, int channel, int recvBufferSize, int sendBufferSize, final Object mutex) {
 		this.home = inst;
@@ -76,14 +76,14 @@ abstract class Channel implements Closeable {
 	void incProcessed(int amount) {
 		assert(Thread.holdsLock(mutex));
 		
-		processed += amount;
+		credit += amount;
 	}
 	
 	int clearProcessed() {
 		assert(Thread.holdsLock(mutex));
 		
-		int x = processed;
-		processed = 0;
+		int x = credit;
+		credit = 0;
 		return x;
 	}
 	
@@ -123,11 +123,10 @@ abstract class Channel implements Closeable {
 	}
 	
 	@Override
-	public void close() {
+	public void close() throws IOException {
 		synchronized(mutex) {
 			try {
-				final AtomicLong timer = new AtomicLong();
-				while (state==Multiplexer.STATE_CHANNEL_CLOSING) home.linger(0, timer);
+				while (state==Multiplexer.STATE_CHANNEL_CLOSING) home.linger();
 				
 				if (state==Multiplexer.STATE_CHANNEL_CLOSED) return;
 				state = Multiplexer.STATE_CHANNEL_CLOSING;
@@ -151,6 +150,19 @@ abstract class Channel implements Closeable {
 		synchronized(mutex) {
 			setState(Multiplexer.STATE_CHANNEL_CLOSED);
 		}
+	}
+
+	void dealWithFarsideInputClosing() {
+		localOutputClosed = true;
+	}
+
+	void dealWithFarsideOutputClosing() {
+		remoteOutputClosed = true;
+	}
+	
+	void dealWithFarsideClosing() {
+		localOutputClosed = true;
+		remoteOutputClosed = true;
 	}
 	
 }
