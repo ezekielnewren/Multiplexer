@@ -117,6 +117,7 @@ public class FastQueue {
 			n.next = first;
 			first = n;
 		}
+		length++;
 	}
 	
 	public int size() {
