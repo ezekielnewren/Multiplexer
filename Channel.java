@@ -2,19 +2,17 @@ package com.github.ezekielnewren.net.multiplexer;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.concurrent.atomic.AtomicLong;
 
 abstract class Channel implements Closeable {
 
-	long state;
 	
 	final Multiplexer home;
 	final Channel parent = this;
-	final int channel;
 	final Object mutex;
-	final int recvBufferSize;
-	final int sendBufferSize;
-	final Multiplexer.ChannelMetadata cmMeta;
+	private final int channel;
+	private final int recvBufferSize;
+	private final int sendBufferSize;
+	private final Multiplexer.ChannelMetadata cmMeta;
 	
 	final ByteArrayCircularBuffer window;
 	
@@ -22,8 +20,9 @@ abstract class Channel implements Closeable {
 	boolean localOutputClosed = false;
 	boolean remoteOutputClosed = false;
 
-	int written = 0;
-	int credit = 0;
+	private long state;
+	private int read = 0;
+	private int written = 0;
 	
 	Channel(Multiplexer inst, int channel, int recvBufferSize, int sendBufferSize, final Object mutex) {
 		this.home = inst;
@@ -36,6 +35,126 @@ abstract class Channel implements Closeable {
 		cmMeta = home.getCM(channel);
 	}
 
+	// private helper methods
+	private int clearRead() {
+		assert(Thread.holdsLock(mutex));
+		
+		int x = read;
+		read = 0;
+		return x;
+	}
+	
+	private void depositCredit(int amount) {
+		assert(Thread.holdsLock(mutex));
+		
+		written -= amount;
+	}
+	
+	private void withdrawCredit(int amount) {
+		assert(Thread.holdsLock(mutex));
+		
+		written += amount;
+	}
+
+	// demultiplexer shared methods
+	void feed(byte[] b, int off, int len) throws IOException {
+		assert(Thread.holdsLock(mutex));
+		try {
+			window.write(b, off, len);
+			depositCredit(len);
+		} finally {
+			mutex.notifyAll();
+		}
+	}
+	
+	void dealWithFarsideInputClosing() {
+		assert(Thread.holdsLock(mutex));
+		try {
+			close();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+	void dealWithFarsideOutputClosing() {
+		assert(Thread.holdsLock(mutex));
+		try {
+			close();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+	
+	void dealWithFarsideClosing() {
+		assert(Thread.holdsLock(mutex));
+		try {
+			close();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+	
+	// subclasses of Channel helpher methods
+	void writePacketWithOneByte(int b) throws IOException {
+		assert(Thread.holdsLock(mutex));
+		
+		home.writePacketWithOneByte(channel, clearRead(), b);
+		withdrawCredit(1);
+	}
+	
+	void writePacket(byte[] b, int off, int len) throws IOException {
+		assert(Thread.holdsLock(mutex));
+		
+		home.writePacket(channel, clearRead(), b, off, len, Multiplexer.FLAG_NULL);
+		withdrawCredit(len);
+	}
+	
+	void flushRead() throws IOException {
+		assert(Thread.holdsLock(mutex));
+		
+		if (read>=window.getBufferSize()/2) {
+			home.writePacket(channel, clearRead(), Multiplexer.FLAG_NULL);
+		}
+	}
+	
+	int getCredit() {
+		assert(Thread.holdsLock(mutex));
+		
+		return sendBufferSize-written;
+	}
+	
+	void incRead(int amount) {
+		assert(Thread.holdsLock(mutex));
+		
+		read += amount;
+	}
+
+	long getState() {
+		return state;
+	}
+	
+	void setState(long newState) {
+		assert(Thread.holdsLock(mutex));
+		if (state==Multiplexer.STATE_CHANNEL_CLOSED) return;
+
+		cmMeta.state = newState;
+		state = newState;
+	}
+
+	void closeQuietly() {
+		synchronized(mutex) {
+			localInputClosed = true;
+			localOutputClosed = true;
+			remoteOutputClosed = true;
+			setState(Multiplexer.STATE_CHANNEL_CLOSED);
+		}
+	}
+
+	
+	
+	
+	
+	// TODO public methods
 	public int getChannelID() {
 		return channel;
 	}
@@ -48,122 +167,59 @@ abstract class Channel implements Closeable {
 	
 	public boolean isClosed() {
 		synchronized(mutex) {
-			return state==Multiplexer.STATE_CHANNEL_CLOSED;
-			//return localInputClosed&&localOutputClosed&&remoteOutputClosed;
+			return localInputClosed&&localOutputClosed&&remoteOutputClosed;
 		}
 	}
 	
-	int getCredit() {
-		assert(Thread.holdsLock(mutex));
-		
-		return sendBufferSize-written;
+	public int getSendBufferSize() {
+		return sendBufferSize;
 	}
 	
-	void withdrawCredit(int amount) {
-		assert(Thread.holdsLock(mutex));
-		
-		if (amount<0) throw new IllegalArgumentException();
-		if (written+amount>sendBufferSize) throw new IllegalArgumentException();
-		written += amount;
+	public int getReceiveBufferSize() {
+		return recvBufferSize;
 	}
 	
-	void depositCredit(int amount) {
-		assert(Thread.holdsLock(mutex));
-		
-		written -= amount;
-	}
-	
-	void incProcessed(int amount) {
-		assert(Thread.holdsLock(mutex));
-		
-		credit += amount;
-	}
-	
-	int clearProcessed() {
-		assert(Thread.holdsLock(mutex));
-		
-		int x = credit;
-		credit = 0;
-		return x;
-	}
-	
-	void feed(byte[] b, int off, int len) throws IOException {
-		assert(Thread.holdsLock(mutex));
-		
-		window.write(b, off, len);
-	}
-	
-	void writePacket(byte[] b, int off, int len) throws IOException {
-		assert(Thread.holdsLock(mutex));
-		
-		home.writePacket(channel, clearProcessed(), b, off, len, Multiplexer.FLAG_NULL);
-	}
-	
-	void setState(long newState) {
-		assert(Thread.holdsLock(mutex));
-		
-		state = newState;
-		if (newState!=Multiplexer.STATE_CHANNEL_CLOSED) cmMeta.state = newState;
-	}
-
 	public void closeInput() throws IOException {
-		
-	}
-	
-	void closeInputQuietly() {
-		
+		window.closeInput();
+		close();
 	}
 	
 	public void closeOutput() throws IOException {
-		
-	}
-	
-	void closeOutputQuietly() {
-		
+		close();
 	}
 	
 	@Override
 	public void close() throws IOException {
 		synchronized(mutex) {
 			try {
-				while (state==Multiplexer.STATE_CHANNEL_CLOSING) home.linger();
+				while (state==Multiplexer.STATE_CHANNEL_IN_CLOSING_METHOD) home.linger();
 				
-				if (state==Multiplexer.STATE_CHANNEL_CLOSED) return;
-				state = Multiplexer.STATE_CHANNEL_CLOSING;
+				if (isClosed()) return;
+				setState(Multiplexer.STATE_CHANNEL_IN_CLOSING_METHOD);
 				
+				localInputClosed = true;
+				localOutputClosed = true;
 				
+				home.writePacket(channel, clearRead(), Multiplexer.FLAG_IOCL);
+				while (!cmMeta.nextPacketRead.compareAndSet(true, false)) home.linger();
 				
+				remoteOutputClosed = true;
 				
+				window.closeOutput();
 				
-				
-				state = Multiplexer.STATE_CHANNEL_CLOSED;
+				setState(Multiplexer.STATE_CHANNEL_CLOSED);
 			} finally {
 				mutex.notifyAll();
 			}
 		}
 	}
-
-	void closeQuietly() {
-		localInputClosed = true;
-		localOutputClosed = true;
-		remoteOutputClosed = true;
-		synchronized(mutex) {
-			setState(Multiplexer.STATE_CHANNEL_CLOSED);
-		}
-	}
-
-	void dealWithFarsideInputClosing() {
-		localOutputClosed = true;
-	}
-
-	void dealWithFarsideOutputClosing() {
-		remoteOutputClosed = true;
-	}
 	
-	void dealWithFarsideClosing() {
-		localOutputClosed = true;
-		remoteOutputClosed = true;
-	}
+	
+	
+	
+	
+	
+	
 	
 }
 

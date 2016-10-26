@@ -2,11 +2,13 @@ package com.github.ezekielnewren.net.multiplexer;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.net.DatagramPacket;
 import java.security.DigestInputStream;
 import java.security.DigestOutputStream;
 import java.security.MessageDigest;
 import java.util.Random;
 import java.util.Scanner;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.github.ezekielnewren.io.*;
@@ -16,7 +18,11 @@ import misc.Lib;
 public class MuxDriver {
 
 	public static void main(String[] args) throws Exception {
-		cbTest();
+		//cbTest();
+		
+		muxTest();
+		
+		//multiThreadTest();
 		
 	}
 	
@@ -32,7 +38,13 @@ public class MuxDriver {
 					Multiplexer home = new Multiplexer(clientWindow.getInputStream(), serverWindow.getOutputStream());
 					ClientMultiplexer client = home;
 				
-					StreamChannel c = client.connectStreamChannel(65535, 0x8000, Long.MAX_VALUE);
+					DatagramPacketChannel c = client.connectDatagramPacketChannel(65535, 0x8000, Long.MAX_VALUE);
+					
+					byte[] data = "abcdefghijklmnopqrstuvwxyz".getBytes();
+					
+					DatagramPacket dp = new DatagramPacket(data, data.length);
+					
+					c.send(dp);
 					
 					c.close();
 					
@@ -52,7 +64,15 @@ public class MuxDriver {
 					Multiplexer home = new Multiplexer(serverWindow.getInputStream(), clientWindow.getOutputStream(), 65535);
 					ServerMultiplexer server = home;
 					
-					StreamChannel s = server.acceptStreamChannel(65535, 0x8000, Long.MAX_VALUE, false);
+					DatagramPacketChannel s = server.acceptDatagramPacketChannel(65535, 0x8000, Long.MAX_VALUE, false);
+					
+					byte[] data = new byte[s.getReceiveBufferSize()];
+					
+					DatagramPacket dp = new DatagramPacket(data, data.length);
+					
+					s.receive(dp);
+					
+					System.out.println("channel "+s.getChannelID()+": "+new String(dp.getData(), 0, dp.getLength()));
 					
 					s.close();
 					
@@ -75,11 +95,63 @@ public class MuxDriver {
 		worker[1].join();
 	}
 	
+	public static void multiThreadTest() {
+		
+		String[] user = {"John", "Teresa", "Bob", "Bill", "Joe"};
+		
+		Thread[] t = new Thread[user.length];
+		
+		final Object lock = new Object();
+		
+		final AtomicBoolean x = new AtomicBoolean(false);
+		
+		for (int i=0; i<user.length; i++) {
+			t[i] = new Thread(new Runnable(){
+
+				@Override
+				public void run() {
+					try {
+						synchronized(lock) {
+							while (!x.get()) {
+								lock.wait();
+								
+								Lib.doNothing();
+							}
+						}
+					} catch (Exception e) {
+						e.printStackTrace();
+					}
+				}
+				
+			});
+			t[i].setName(user[i]);
+			//t[i].setDaemon(true);
+		}
+		
+		for (int i=0; i<user.length; i++) t[i].start();
+		
+		synchronized(lock) {
+			
+			x.set(true);
+			lock.notifyAll();
+			
+			
+		}
+		
+		
+		
+		
+	}
+	
+	
+	
 	public static void cbTest() {
 		try {
+			// 58.181Gbps boundless
+			// 24.739Gbps bounded
 			
 			byte[] cbuff = new byte[150000];
-			ByteArrayCircularBuffer inst = new ByteArrayCircularBuffer(cbuff, 6, 6+4*8192-1);
+			ByteArrayCircularBuffer inst = new ByteArrayCircularBuffer(cbuff);
 			byte[] data = "abcde".getBytes();
 			
 			int total = 10000;

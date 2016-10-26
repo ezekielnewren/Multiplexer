@@ -36,12 +36,12 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	static final long STATE_ACCEPTING = (1<<i++);
 	static final long STATE_CONNECTING = (1<<i++);
 	static final long STATE_ESTABLISHED = (1<<i++);
-	static final long STATE_CHANNEL_CLOSING = (1<<i++);
-	static final long STATE_INPUT_CLOSED = (1<<i++);
-	static final long STATE_OUTPUT_CLOSED = (1<<i++);
+	static final long STATE_CHANNEL_IN_CLOSING_METHOD = (1<<i++);
+//	static final long STATE_INPUT_CLOSED = (1<<i++);
+//	static final long STATE_OUTPUT_CLOSED = (1<<i++);
 	static final long STATE_CHANNEL_CLOSED = (1<<i++);
 
-	static final long LINGERING_STATES = STATE_CONNECTING|STATE_ACCEPTING|STATE_LISTENING|STATE_CHANNEL_CLOSING;
+	static final long LINGERING_STATES = STATE_CONNECTING|STATE_ACCEPTING|STATE_LISTENING|STATE_CHANNEL_IN_CLOSING_METHOD;
 
 	// Multiplexer states
 	static final long STATE_OPEN = (1<<i++);
@@ -50,6 +50,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	
 	// per instance constants
 	private final Multiplexer home = this;
+	private final Demultiplexer segregator;
 	private final DataInputStream input;
 	private final DataOutputStream output;
 	private final byte[] recvBuffer = new byte[8+0xffff+4];
@@ -76,21 +77,21 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 			}
 		}
 		
-		new Demultiplexer();
+		segregator = new Demultiplexer();
 	}
 
 	void writePacket(int channel, int credit, byte[] b, int off, int len, int flags) throws IOException {
-		synchronized(mutex) {
-			// 2B_len, 2B_channel, 3B_credit, 1B_flags, ...B_payload, 4B_crc
-			if (b!=null) {
-				if ((off < 0) || (off > b.length) || (len < 0) ||
-						((off + len) > b.length) || ((off + len) < 0) ||
-						(len>0xffff)) {
-					throw new IndexOutOfBoundsException();
-				}
-			} else {
-				if ((off|len)!=0) throw new IllegalArgumentException("len and off must be 0 if b is null");
+		// 2B_len, 2B_channel, 3B_credit, 1B_flags, ...B_payload, 4B_crc
+		if (b!=null) {
+			if ((off < 0) || (off > b.length) || (len < 0) ||
+					((off + len) > b.length) || ((off + len) < 0) ||
+					(len>0xffff)) {
+				throw new IndexOutOfBoundsException();
 			}
+		} else {
+			if ((off|len)!=0) throw new IllegalArgumentException("len and off must be 0 if b is null");
+		}
+		synchronized(mutex) {
 
 			// header
 			numberToBytes(len, sendBuffer, 0, 2);
@@ -100,13 +101,14 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 
 			// trailer
 			sendCRC.reset();
-			sendCRC.update(sendBuffer, 0, 8+len);
-			numberToBytes(sendCRC.getValue(), sendBuffer, 8+len, 4);
+			sendCRC.update(sendBuffer, 0, 8);	// header
+			sendCRC.update(b, off, len);		// payload
+			numberToBytes(sendCRC.getValue(), sendBuffer, 8, 4);
 
 			try {
-				output.write(sendBuffer, 0, 8);
-				if (b!=null) output.write(b, 0, len);
-				output.write(sendBuffer, 8, 4);
+				output.write(sendBuffer, 0, 8);			// send header
+				if (b!=null) output.write(b, off, len);	// send payload
+				output.write(sendBuffer, 8, 4);			// send trailer
 			} catch (IOException ioe) {
 				closeQuietly();
 				throw ioe;
@@ -125,12 +127,6 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		writePacket(channel, credit, null, 0, 0, flags);
 	}
 	
-//	private boolean isBound(int channel) {
-//		
-//		assert(Thread.holdsLock(mutex));
-//		return channelBound.get(channel);
-//	}
-
 	private void bind(int channel, boolean recurring) throws IOException {
 		// check the arguments and state
 		ChannelMetadata cmMeta = getCM(channel);
@@ -194,16 +190,14 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 					throw new ChannelResetException();
 				}
 				
-				Channel cm;
 				if (messageMode) {
-					cm = new DatagramPacketChannel(this, channel, recvBufferSize, cmMeta.credit, mutex);
+					cmMeta.ptr = new DatagramPacketChannel(this, channel, recvBufferSize, cmMeta.credit, mutex);
 				} else {
-					cm = new StreamChannel(this, channel, recvBufferSize, cmMeta.credit, mutex);
+					cmMeta.ptr = new StreamChannel(this, channel, recvBufferSize, cmMeta.credit, mutex);
 				}
-				cmMeta.ptr = cm;
 				cmMeta.setState(STATE_ESTABLISHED);
 				
-				return cm;
+				assert(cmMeta.ptr!=null); return cmMeta.ptr;
 			} finally {
 				mutex.notifyAll();
 				
@@ -227,21 +221,34 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 					bind(channel, recurring);
 				}
 				cmMeta.setState(STATE_ACCEPTING);
+				cmMeta.messageMode = messageMode;
 				
 				final AtomicLong timer = new AtomicLong();
 				while (!cmMeta.nextPacketRead.compareAndSet(true, false)) linger(timeout, timer);
-				if (cmMeta.reset) throw new ChannelResetException();
-				writePacket(channel, recvBufferSize, FLAG_SYN|( messageMode?FLAG_MSG:FLAG_NULL ));
 				
-				Channel cm;
-				if (messageMode) {
-					cm = new DatagramPacketChannel(this, channel, recvBufferSize, cmMeta.credit, mutex);
-				} else {
-					cm = new StreamChannel(this, channel, recvBufferSize, cmMeta.credit, mutex);
+				// if timedout throw and error
+				if (timer.get()>timeout) {
+					cmMeta.setState(STATE_CHANNEL_CLOSED);
+					unbind(channel);
+					throw new ChannelTimeoutException();
 				}
 				
+				if (cmMeta.reset) {
+					cmMeta.setState(STATE_CHANNEL_CLOSED);
+					unbind(channel);
+					throw new ChannelResetException();
+				}
+				
+				writePacket(channel, recvBufferSize, FLAG_SYN|( messageMode?FLAG_MSG:FLAG_NULL ));
+				
+				if (messageMode) {
+					cmMeta.ptr = new DatagramPacketChannel(this, channel, recvBufferSize, cmMeta.credit, mutex);
+				} else {
+					cmMeta.ptr = new StreamChannel(this, channel, recvBufferSize, cmMeta.credit, mutex);
+				}
 				cmMeta.setState(STATE_ESTABLISHED);
-				return cm;
+				
+				assert(cmMeta.ptr!=null); return cmMeta.ptr;
 			} finally {
 				mutex.notifyAll();
 				
@@ -256,8 +263,10 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	
 	class Demultiplexer implements Runnable {
 
+		final Thread handle;
+		
 		public Demultiplexer() {
-			Thread handle = new Thread(this);
+			handle = new Thread(this);
 			handle.setName(Thread.currentThread().getName()+"segregator");
 			handle.setDaemon(true);
 			handle.start();
@@ -309,6 +318,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 							
 							if (!channelBound.get(channel)) {
 								sendReset(channel);
+								continue;
 							}
 							
 							switch (flags) {
@@ -323,11 +333,13 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 								// near side type vs far side type
 								if (cmMeta.messageMode != ((flags&FLAG_MSG)!=0) ) {
 									resetChannel(channel);
+									sendReset(channel);
 								}
 								// check for connect/accept mismatch
 								if ( !((cmMeta.state==STATE_ACCEPTING&&(flags&FLAG_CLI)!=0) 
 										|| (cmMeta.state==STATE_CONNECTING&&(flags&FLAG_CLI)==0)) ) {
 									resetChannel(channel);
+									sendReset(channel);
 								}
 								
 								break;
@@ -340,14 +352,20 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 								break;
 								
 							case FLAG_OCL:
+								cmMeta.nextPacketRead.set(true);
+								mutex.notifyAll();
 								cmMeta.ptr.dealWithFarsideOutputClosing();
 								break;
 								
 							case FLAG_ICL:
+								cmMeta.nextPacketRead.set(true);
+								mutex.notifyAll();
 								cmMeta.ptr.dealWithFarsideInputClosing();
 								break;
 							
 							case FLAG_IOCL:
+								cmMeta.nextPacketRead.set(true);
+								mutex.notifyAll();
 								cmMeta.ptr.dealWithFarsideClosing();
 								break;
 								
@@ -361,7 +379,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 								break;
 							}
 							
-							if (cmMeta.state == STATE_ESTABLISHED) {
+							if (cmMeta.state==STATE_ESTABLISHED && len>0) {
 								cmMeta.ptr.feed(recvBuffer, 8, len);
 							}
 							
@@ -386,7 +404,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 			
 			assert(Thread.holdsLock(mutex));
 			cmMeta.reset = true;
-			if (cmMeta.ptr!=null) cmMeta.ptr.closeQuietly();
+			if (cmMeta.ptr!=null&&cmMeta.state!=STATE_CHANNEL_IN_CLOSING_METHOD) cmMeta.ptr.closeQuietly();
 		}
 		
 		void sendReset(int channel) throws IOException {
@@ -488,10 +506,11 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		if (!(0<recvBufferSize&&recvBufferSize<=0xffffff)) throw new IllegalArgumentException("bufferSize must fall within 1 and 16777215 inclusive");
 	}
 
-	void linger(long waitForMillis, final AtomicLong timer) {
+	void linger(long waitForMillis, final AtomicLong timer) throws IOException {
 		if ((waitForMillis|timer.get())<0) throw new IllegalArgumentException(); 
 		if (timer.get()>waitForMillis) return;
 		if (waitForMillis!=0) waitForMillis -= timer.get();
+		if (isClosed()||!segregator.handle.isAlive()) throw new IOException("Multiplexer is closed or Demultiplexer has died");
 		long beg = System.nanoTime();
 		try {
 			mutex.wait(waitForMillis);
@@ -501,7 +520,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		timer.addAndGet((System.nanoTime()-beg)/1000000);
 	}
 
-	void linger() {
+	void linger() throws IOException {
 		linger(0, new AtomicLong());
 	}
 	
