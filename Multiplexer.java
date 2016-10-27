@@ -12,6 +12,11 @@ import java.util.zip.CRC32;
 
 public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 
+	static boolean DEBUG = false;
+	static {
+		assert(DEBUG=true);
+	}
+	
 	// constants
 	public static final long DEFAULT_ACCEPT_TIMEOUT = 0;
 	public static final long DEFAULT_CONNECTION_TIMEOUT = 60000;
@@ -72,8 +77,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 
 		synchronized(mutex) {
 			for (int i=0; i<prePasvOpen.length; i++) {
-				bind(prePasvOpen[i], false);
-				getCM(prePasvOpen[i]).setState(STATE_LISTENING);
+				listen(prePasvOpen[i]);
 			}
 		}
 		
@@ -101,8 +105,8 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 
 			// trailer
 			sendCRC.reset();
-			sendCRC.update(sendBuffer, 0, 8);	// header
-			sendCRC.update(b, off, len);		// payload
+			sendCRC.update(sendBuffer, 0, 8);			// header
+			if (b!=null) sendCRC.update(b, off, len);	// payload
 			numberToBytes(sendCRC.getValue(), sendBuffer, 8, 4);
 
 			try {
@@ -178,7 +182,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 				while (timer.get()<timeout && !cmMeta.nextPacketRead.compareAndSet(true, false)) linger(timeout, timer);
 				
 				// if timedout throw and error
-				if (timer.get()>timeout) {
+				if (timer.get()>timeout&&timeout>0) {
 					cmMeta.setState(STATE_CHANNEL_CLOSED);
 					unbind(channel);
 					throw new ChannelTimeoutException();
@@ -210,6 +214,15 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		}
 	}
 	
+	public void listen(int channel) throws IOException {
+		ChannelMetadata cmMeta = getCM(channel);
+		
+		synchronized(mutex) {
+			bind(channel, false);
+			cmMeta.state = STATE_LISTENING;
+		}
+	}
+	
 	private Channel accept(int channel, int recvBufferSize, long timeout, boolean messageMode, boolean recurring) throws IOException {
 		ChannelMetadata cmMeta = getCM(channel);
 		validBufferSize(recvBufferSize);
@@ -227,7 +240,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 				while (!cmMeta.nextPacketRead.compareAndSet(true, false)) linger(timeout, timer);
 				
 				// if timedout throw and error
-				if (timer.get()>timeout) {
+				if (timer.get()>timeout&&timeout>0) {
 					cmMeta.setState(STATE_CHANNEL_CLOSED);
 					unbind(channel);
 					throw new ChannelTimeoutException();
@@ -322,6 +335,9 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 							}
 							
 							switch (flags) {
+							case FLAG_NULL:
+								break;
+							
 							case FLAG_SYN:
 							case FLAG_SYN|FLAG_CLI:
 							case FLAG_SYN|FLAG_MSG:
@@ -374,14 +390,17 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 								break;
 								
 							default:
-								System.err.println("unknown flag combination");
+								if (DEBUG) System.err.println("unknown flag combination");
 								sendReset(channel);
 								break;
 							}
 							
-							if (cmMeta.state==STATE_ESTABLISHED && len>0) {
+							if (cmMeta.state==STATE_ESTABLISHED) {
 								cmMeta.ptr.feed(recvBuffer, 8, len);
+								cmMeta.ptr.depositCredit(credit);
 							}
+							
+							
 							
 							if ((cmMeta.state&LINGERING_STATES)!=0) {
 								cmMeta.nextPacketRead.set(true);
@@ -503,7 +522,8 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	}
 	
 	private static void validBufferSize(int recvBufferSize) {
-		if (!(0<recvBufferSize&&recvBufferSize<=0xffffff)) throw new IllegalArgumentException("bufferSize must fall within 1 and 16777215 inclusive");
+		if (recvBufferSize<1) throw new IllegalArgumentException("recvBufferSize must be at least 1");
+		if (recvBufferSize>0xffffff) throw new IllegalArgumentException("max recvBufferSize "+0xffffff);
 	}
 
 	void linger(long waitForMillis, final AtomicLong timer) throws IOException {

@@ -44,7 +44,7 @@ public class StreamChannel extends Channel {
 				try {
 					int read = window.read();
 					if (read<0) return read;
-					parent.incRead(1);
+					incRead(1);
 					flushRead();
 					return read;
 				} finally {
@@ -60,7 +60,7 @@ public class StreamChannel extends Channel {
 				try {
 					int read = window.read(b, off, len);
 					if (read<0) return read;
-					parent.incRead(read);
+					incRead(read);
 					flushRead();
 					return read;
 				} finally {
@@ -71,7 +71,7 @@ public class StreamChannel extends Channel {
 		
 		@Override
 		public void close() throws IOException {
-			parent.closeInput();
+			closeInput();
 		}
 		
 	}
@@ -83,9 +83,9 @@ public class StreamChannel extends Channel {
 			if (localOutputClosed) throw new IOException("StreamChannel Closed");
 			synchronized(mutex) {
 				try {
-					while (parent.getCredit()==0) home.linger();
+					while (getCredit()==0) home.linger();
 					
-					parent.writePacketWithOneByte(b);
+					writePacketWithOneByte(b);
 					
 				} finally {
 					mutex.notifyAll();
@@ -101,9 +101,9 @@ public class StreamChannel extends Channel {
 					int total = 0;
 					while (total<len) {
 						int write = 0;
-						while (( write=Math.min(parent.getCredit(), Math.min(0xffff, len-total)) )==0) home.linger();
+						while (( write=Math.min(getCredit(), Math.min(0xffff, len-total)) )==0) home.linger();
 						
-						parent.writePacket(b, off+total, write);
+						writePacket(b, off+total, write);
 						
 						total += write;
 					}
@@ -116,7 +116,7 @@ public class StreamChannel extends Channel {
 		
 		@Override
 		public void close() throws IOException {
-			parent.closeOutput();
+			closeOutput();
 		}
 		
 		

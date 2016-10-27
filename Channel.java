@@ -7,7 +7,7 @@ abstract class Channel implements Closeable {
 
 	
 	final Multiplexer home;
-	final Channel parent = this;
+	//final Channel parent = this;
 	final Object mutex;
 	private final int channel;
 	private final int recvBufferSize;
@@ -22,7 +22,9 @@ abstract class Channel implements Closeable {
 
 	private long state;
 	private int read = 0;
-	private int written = 0;
+	//private int written = 0;
+	private int credit;
+	
 	
 	Channel(Multiplexer inst, int channel, int recvBufferSize, int sendBufferSize, final Object mutex) {
 		this.home = inst;
@@ -44,24 +46,27 @@ abstract class Channel implements Closeable {
 		return x;
 	}
 	
-	private void depositCredit(int amount) {
-		assert(Thread.holdsLock(mutex));
-		
-		written -= amount;
-	}
+	
 	
 	private void withdrawCredit(int amount) {
 		assert(Thread.holdsLock(mutex));
 		
-		written += amount;
+		credit -= amount;
 	}
 
 	// demultiplexer shared methods
+	void depositCredit(int amount) {
+		assert(Thread.holdsLock(mutex));
+		
+		credit += amount;
+	}
+	
 	void feed(byte[] b, int off, int len) throws IOException {
+		if (len==0) return;
+
 		assert(Thread.holdsLock(mutex));
 		try {
 			window.write(b, off, len);
-			depositCredit(len);
 		} finally {
 			mutex.notifyAll();
 		}
@@ -78,15 +83,14 @@ abstract class Channel implements Closeable {
 
 	void dealWithFarsideOutputClosing() {
 		assert(Thread.holdsLock(mutex));
-		try {
-			close();
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
+		
+		remoteOutputClosed = true;
+		window.closeOutput();
 	}
 	
 	void dealWithFarsideClosing() {
 		assert(Thread.holdsLock(mutex));
+		
 		try {
 			close();
 		} catch (IOException e) {
@@ -120,7 +124,7 @@ abstract class Channel implements Closeable {
 	int getCredit() {
 		assert(Thread.holdsLock(mutex));
 		
-		return sendBufferSize-written;
+		return credit;
 	}
 	
 	void incRead(int amount) {

@@ -12,30 +12,40 @@ public class DatagramPacketChannel extends Channel {
 	}
 
 	public void receive(DatagramPacket p) throws IOException {
+		if (p.getLength()<getMinRecvLength()) throw new IllegalArgumentException("DatagramPacket length too small");
+		if (localInputClosed) throw new IOException("DatagramPacketChannel Closed");
+		
 		synchronized(mutex) {
 			while(packetList.size()==0) home.linger();
-
-			int packLen = packetList.popInt();
-			int loRead = Math.min(packLen, p.getLength());
-			int theRest = packLen-loRead;
-			window.read(p.getData(), p.getOffset(), loRead);
-			window.skip(theRest);
 			
-			incRead(packLen);
+			int read = window.read(p.getData(), p.getOffset(), packetList.popInt());
+			p.setLength(read);
+			incRead(read);
 		}
 	}
 	
 	public void send(DatagramPacket p) throws IOException {
+		if (p.getLength()>getMaxSendLength()) throw new IllegalArgumentException("DatagramPacket too large");
+		if (localInputClosed) throw new IOException("DatagramPacketChannel Closed");
+		
 		synchronized(mutex) {
 			writePacket(p.getData(), p.getOffset(), p.getLength());
 		}
+	}
+	
+	public int getMinRecvLength() {
+		return Math.min(0xffff, getReceiveBufferSize());
+	}
+	
+	public int getMaxSendLength() {
+		return Math.min(0xffff, getSendBufferSize());
 	}
 	
 	@Override
 	void feed(byte[] b, int off, int len) throws IOException {
 		assert(Thread.holdsLock(mutex));
 		
-		parent.feed(b, off, len);
+		super.feed(b, off, len);
 		packetList.push(len);
 	}
 	

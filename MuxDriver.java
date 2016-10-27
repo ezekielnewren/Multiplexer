@@ -38,13 +38,23 @@ public class MuxDriver {
 					Multiplexer home = new Multiplexer(clientWindow.getInputStream(), serverWindow.getOutputStream());
 					ClientMultiplexer client = home;
 				
-					DatagramPacketChannel c = client.connectDatagramPacketChannel(65535, 0x8000, Long.MAX_VALUE);
+					DatagramPacketChannel c = client.connectDatagramPacketChannel(0, 0x8000, Long.MAX_VALUE);
 					
 					byte[] data = "abcdefghijklmnopqrstuvwxyz".getBytes();
 					
 					DatagramPacket dp = new DatagramPacket(data, data.length);
 					
-					c.send(dp);
+					Scanner stdin = new Scanner(System.in);
+					
+					while (true) {
+						String message = stdin.nextLine();
+						dp.setData(message.getBytes());
+						c.send(dp);
+						if (message.equals("exit")) break;
+					}
+					
+					stdin.close();
+					
 					
 					c.close();
 					
@@ -64,16 +74,21 @@ public class MuxDriver {
 					Multiplexer home = new Multiplexer(serverWindow.getInputStream(), clientWindow.getOutputStream(), 65535);
 					ServerMultiplexer server = home;
 					
-					DatagramPacketChannel s = server.acceptDatagramPacketChannel(65535, 0x8000, Long.MAX_VALUE, false);
+					int recvSize = 200;
+					DatagramPacketChannel s = server.acceptDatagramPacketChannel(0, recvSize, Long.MAX_VALUE, false);
 					
-					byte[] data = new byte[s.getReceiveBufferSize()];
+					byte[] data = new byte[0xffff];
 					
 					DatagramPacket dp = new DatagramPacket(data, data.length);
+
+					while (true) {
+						dp.setData(data, 500, recvSize);
+						s.receive(dp);
+						String command = new String(dp.getData(), dp.getOffset(), dp.getLength());
+						if (command.equals("exit")) break;
+						System.out.println("channel "+s.getChannelID()+": "+command);
 					
-					s.receive(dp);
-					
-					System.out.println("channel "+s.getChannelID()+": "+new String(dp.getData(), 0, dp.getLength()));
-					
+					}
 					s.close();
 					
 					server.close();
@@ -94,6 +109,29 @@ public class MuxDriver {
 		worker[0].join();
 		worker[1].join();
 	}
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
 	
 	public static void multiThreadTest() {
 		

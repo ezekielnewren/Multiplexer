@@ -14,4 +14,6 @@ public interface ServerMultiplexer extends CoreMultiplexer {
 	public StreamChannel acceptStreamChannel(int channel, int bufferSize, long timeout) throws IOException;
 	public StreamChannel acceptStreamChannel(int channel, int bufferSize) throws IOException;
 	
+	public void listen(int channel) throws IOException;
+	
 }
