@@ -408,6 +408,10 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 								while ((cmMeta.state&LINGERING_STATES) != 0) linger();
 							}
 							
+							if (cmMeta.state==STATE_CHANNEL_CLOSED) {
+								unbind(channel);
+							}
+							
 						} finally {
 							mutex.notifyAll();
 						}

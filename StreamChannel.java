@@ -58,6 +58,7 @@ public class StreamChannel extends Channel {
 			if (localInputClosed) throw new IOException("StreamChannel Closed");
 			synchronized(mutex) {
 				try {
+					while (window.available()==0) home.linger();
 					int read = window.read(b, off, len);
 					if (read<0) return read;
 					incRead(read);

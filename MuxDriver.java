@@ -32,67 +32,37 @@ public class MuxDriver {
 		
 		final Thread[] worker = new Thread[2];
 		
-		worker[0] = new Thread(new Runnable() {
-			public void run() {
-				try {
-					Multiplexer home = new Multiplexer(clientWindow.getInputStream(), serverWindow.getOutputStream());
-					ClientMultiplexer client = home;
-				
-					DatagramPacketChannel c = client.connectDatagramPacketChannel(0, 0x8000, Long.MAX_VALUE);
-					
-					byte[] data = "abcdefghijklmnopqrstuvwxyz".getBytes();
-					
-					DatagramPacket dp = new DatagramPacket(data, data.length);
-					
-					Scanner stdin = new Scanner(System.in);
-					
-					while (true) {
-						String message = stdin.nextLine();
-						dp.setData(message.getBytes());
-						c.send(dp);
-						if (message.equals("exit")) break;
-					}
-					
-					stdin.close();
-					
-					
-					c.close();
-					
-					client.close();
-					
-				} catch (IOException e) {
-					e.printStackTrace();
-				}
-			}
-		});
-		worker[0].setDaemon(true);
-		worker[0].setName("--client--");
+		long total = 1500000000;
+		
+		long seed = 9857327476839L;
+		
 		
 		worker[1] = new Thread(new Runnable() {
 			public void run() {
 				try {
-					Multiplexer home = new Multiplexer(serverWindow.getInputStream(), clientWindow.getOutputStream(), 65535);
+					Multiplexer home = new Multiplexer(serverWindow.getInputStream(), clientWindow.getOutputStream(), 0);
 					ServerMultiplexer server = home;
-					
-					int recvSize = 200;
-					DatagramPacketChannel s = server.acceptDatagramPacketChannel(0, recvSize, Long.MAX_VALUE, false);
-					
-					byte[] data = new byte[0xffff];
-					
-					DatagramPacket dp = new DatagramPacket(data, data.length);
 
-					while (true) {
-						dp.setData(data, 500, recvSize);
-						s.receive(dp);
-						String command = new String(dp.getData(), dp.getOffset(), dp.getLength());
-						if (command.equals("exit")) break;
-						System.out.println("channel "+s.getChannelID()+": "+command);
+					StreamChannel stream = server.acceptStreamChannel(0, 0x8000, Long.MAX_VALUE);
 					
-					}
-					s.close();
+//					MessageDigest md = MessageDigest.getInstance("MD5");
+//					DigestOutputStream dos = new DigestOutputStream(new NullOutputStream(), md);
+					
+					long beg,time;
+					
+					beg = System.nanoTime();
+					Lib.copy(stream.getInputStream(), null, new byte[8192], total);
+					time = (System.nanoTime()-beg)/1000000;
+					System.out.println(SPEED.rateOverTime(total, time).toString(true));
+					
+//					byte[] digest = md.digest();
+//					
+//					System.out.println("server: "+Lib.bytesToHex(digest));
+					
+					stream.close();
 					
 					server.close();
-				} catch (IOException e) {
+				} catch (Exception e) {
 					e.printStackTrace();
 				}
 				
@@ -100,6 +70,39 @@ public class MuxDriver {
 		});
 		worker[1].setDaemon(true);
 		worker[1].setName("--server--");
+		
+		worker[0] = new Thread(new Runnable() {
+			public void run() {
+				try {
+					Multiplexer home = new Multiplexer(clientWindow.getInputStream(), serverWindow.getOutputStream());
+					ClientMultiplexer client = home;
+				
+					StreamChannel c = client.connectStreamChannel(0, 27, Long.MAX_VALUE);
+					
+//					RandomInputStream ris = new RandomInputStream(new Random(seed));
+//					MessageDigest md = MessageDigest.getInstance("MD5");
+//					DigestInputStream dis = new DigestInputStream(ris, md);
+					
+					Lib.copy(null, c.getOutputStream(), new byte[65535], total);
+					
+//					byte[] digest = md.digest();
+//					
+//					System.out.println("client: "+Lib.bytesToHex(digest));
+					
+					
+					c.close();
+					
+					client.close();
+					
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+		});
+		worker[0].setDaemon(true);
+		worker[0].setName("--client--");
+		
+		
 		
 		
 		worker[0].start();

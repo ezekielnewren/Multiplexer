@@ -35,6 +35,7 @@ abstract class Channel implements Closeable {
 		window = new ByteArrayCircularBuffer(recvBufferSize);
 		state = Multiplexer.STATE_ESTABLISHED;
 		cmMeta = home.getCM(channel);
+		depositCredit(sendBufferSize);
 	}
 
 	// private helper methods
