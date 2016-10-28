@@ -27,8 +27,8 @@ public class MuxDriver {
 	}
 	
 	public static void muxTest() throws Exception {
-		final ByteArrayCircularBuffer clientWindow = new ByteArrayCircularBuffer(0x1000);
-		final ByteArrayCircularBuffer serverWindow = new ByteArrayCircularBuffer(0x1000);
+		final ByteArrayCircularBuffer clientWindow = new ByteArrayCircularBuffer(0xffff);
+		final ByteArrayCircularBuffer serverWindow = new ByteArrayCircularBuffer(0xffff);
 		
 		final Thread[] worker = new Thread[2];
 		
