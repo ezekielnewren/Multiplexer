@@ -449,6 +449,9 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 		synchronized(mutex) {
 			state = STATE_CLOSED;
 		}
+		
+		try {input.close();} catch (IOException e){}
+		try {output.close();} catch (IOException e){}
 	}
 	
 	public void close() throws IOException {
@@ -465,6 +468,11 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 			} finally {
 				mutex.notifyAll();
 				state = STATE_CLOSED;
+				
+				IOException ioe = new IOException();
+				try {input.close();} catch (IOException e){ioe.addSuppressed(e);}
+				try {output.close();} catch (IOException e){ioe.addSuppressed(e);}
+				if (ioe.getSuppressed().length>0) throw ioe;
 			}
 		}
 	}
