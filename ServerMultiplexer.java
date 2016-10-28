@@ -4,9 +4,16 @@ import java.io.IOException;
 
 public interface ServerMultiplexer extends CoreMultiplexer {
 	
-	public Channel accept(int channel, int bufferSize, long timeout, boolean recurring) throws IOException;
-	public Channel accept(int channel, int bufferSize, boolean recurring) throws IOException;
-	public Channel accept(int channel, int bufferSize, long timeout) throws IOException;
-	public Channel accept(int channel, int bufferSize) throws IOException;
+	public DatagramPacketChannel acceptDatagramPacketChannel(int channel, int bufferSize, long timeout, boolean recurring) throws IOException;
+	public DatagramPacketChannel acceptDatagramPacketChannel(int channel, int bufferSize, boolean recurring) throws IOException;
+	public DatagramPacketChannel acceptDatagramPacketChannel(int channel, int bufferSize, long timeout) throws IOException;
+	public DatagramPacketChannel acceptDatagramPacketChannel(int channel, int bufferSize) throws IOException;
+	
+	public StreamChannel acceptStreamChannel(int channel, int bufferSize, long timeout, boolean recurring) throws IOException;
+	public StreamChannel acceptStreamChannel(int channel, int bufferSize, boolean recurring) throws IOException;
+	public StreamChannel acceptStreamChannel(int channel, int bufferSize, long timeout) throws IOException;
+	public StreamChannel acceptStreamChannel(int channel, int bufferSize) throws IOException;
+	
+	public void listen(int channel) throws IOException;
 	
 }
