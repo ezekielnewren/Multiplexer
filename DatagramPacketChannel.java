@@ -29,6 +29,7 @@ public class DatagramPacketChannel extends Channel {
 		if (localInputClosed) throw new IOException("DatagramPacketChannel Closed");
 		
 		synchronized(mutex) {
+			if (getCredit()<p.getLength()) home.linger();
 			writePacket(p.getData(), p.getOffset(), p.getLength());
 		}
 	}
