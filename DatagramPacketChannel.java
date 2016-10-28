@@ -34,12 +34,18 @@ public class DatagramPacketChannel extends Channel {
 		}
 	}
 	
+	public int availablePackets() {
+		synchronized(mutex) {
+			return packetList.size();
+		}
+	}
+	
 	public int getMinRecvLength() {
-		return Math.min(0xffff, getReceiveBufferSize());
+		return Math.min(Multiplexer.MAX_PAYLOAD_SIZE, getReceiveBufferSize());
 	}
 	
 	public int getMaxSendLength() {
-		return Math.min(0xffff, getSendBufferSize());
+		return Math.min(Multiplexer.MAX_PAYLOAD_SIZE, getSendBufferSize());
 	}
 	
 	@Override

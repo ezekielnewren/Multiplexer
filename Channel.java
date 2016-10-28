@@ -105,7 +105,8 @@ abstract class Channel implements Closeable {
 	
 	void writePacket(byte[] b, int off, int len) throws IOException {
 		assert(Thread.holdsLock(mutex));
-		assert(len<getCredit());
+		assert(len<=getCredit())
+			:"well this is a problem";
 		
 		home.writePacket(channel, clearRead(), b, off, len, Multiplexer.FLAG_NULL);
 		withdrawCredit(len);

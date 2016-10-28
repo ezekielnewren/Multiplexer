@@ -1,7 +1,6 @@
 package com.github.ezekielnewren.net.multiplexer;
 
 import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -21,6 +20,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	public static final long DEFAULT_ACCEPT_TIMEOUT = 0;
 	public static final long DEFAULT_CONNECTION_TIMEOUT = 60000;
 	public static final int MAX_BUFFER_SIZE = 0xffffff;
+	public static final int MAX_PAYLOAD_SIZE = 0xffff;
 	  
 	static final int FLAG_NULL = 0x0;
 	static final int FLAG_SYN = 0x1;
@@ -57,7 +57,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	private final Multiplexer home = this;
 	private final Demultiplexer segregator;
 	private final DataInputStream input;
-	private final DataOutputStream output;
+	private final OutputStream output;
 	private final byte[] recvBuffer = new byte[8+0xffff+4];
 	private final byte[] sendBuffer = new byte[8+4+1];
 	private final CRC32 sendCRC = new CRC32();
@@ -69,7 +69,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	
 	public Multiplexer(InputStream is, OutputStream os, int... prePasvOpen) throws IOException {
 		input = (is instanceof DataInputStream)?(DataInputStream)is:new DataInputStream(is);
-		output = (os instanceof DataOutputStream)?(DataOutputStream)os:new DataOutputStream(os);
+		output = os;
 		
 		for (int i=0; i<cmMeta.length; i++) {
 			cmMeta[i] = new ChannelMetadata();
@@ -113,6 +113,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 				output.write(sendBuffer, 0, 8);			// send header
 				if (b!=null) output.write(b, off, len);	// send payload
 				output.write(sendBuffer, 8, 4);			// send trailer
+				output.flush();
 			} catch (IOException ioe) {
 				closeQuietly();
 				throw ioe;
@@ -535,7 +536,7 @@ public class Multiplexer implements ClientMultiplexer, ServerMultiplexer {
 	
 	private static void validBufferSize(int recvBufferSize) {
 		if (recvBufferSize<1) throw new IllegalArgumentException("recvBufferSize must be at least 1");
-		if (recvBufferSize>0xffffff) throw new IllegalArgumentException("max recvBufferSize "+0xffffff);
+		if (recvBufferSize>MAX_BUFFER_SIZE) throw new IllegalArgumentException("max recvBufferSize "+MAX_BUFFER_SIZE);
 	}
 
 	void linger(long waitForMillis, final AtomicLong timer) throws IOException {

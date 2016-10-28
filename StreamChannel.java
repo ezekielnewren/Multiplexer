@@ -102,7 +102,7 @@ public class StreamChannel extends Channel {
 					int total = 0;
 					while (total<len) {
 						int write = 0;
-						while (( write=Math.min(getCredit(), Math.min(0xffff, len-total)) )==0) home.linger();
+						while (( write=Math.min(getCredit(), Math.min(Multiplexer.MAX_PAYLOAD_SIZE, len-total)) )==0) home.linger();
 						
 						writePacket(b, off+total, write);
 						
