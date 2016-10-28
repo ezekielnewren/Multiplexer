@@ -7,7 +7,6 @@ abstract class Channel implements Closeable {
 
 	
 	final Multiplexer home;
-	//final Channel parent = this;
 	final Object mutex;
 	private final int channel;
 	private final int recvBufferSize;
@@ -22,7 +21,6 @@ abstract class Channel implements Closeable {
 
 	private long state;
 	private int read = 0;
-	//private int written = 0;
 	private int credit;
 	
 	
@@ -46,8 +44,6 @@ abstract class Channel implements Closeable {
 		read = 0;
 		return x;
 	}
-	
-	
 	
 	private void withdrawCredit(int amount) {
 		assert(Thread.holdsLock(mutex));
@@ -109,6 +105,7 @@ abstract class Channel implements Closeable {
 	
 	void writePacket(byte[] b, int off, int len) throws IOException {
 		assert(Thread.holdsLock(mutex));
+		assert(len<getCredit());
 		
 		home.writePacket(channel, clearRead(), b, off, len, Multiplexer.FLAG_NULL);
 		withdrawCredit(len);
