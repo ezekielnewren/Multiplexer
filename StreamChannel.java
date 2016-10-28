@@ -26,13 +26,13 @@ public class StreamChannel extends Channel {
 	class ChannelInputStream extends InputStream {
 
 		@Override
-		public int available() throws IOException {
+		public synchronized int available() throws IOException {
 			if (localInputClosed) throw new IOException("StreamChannel Closed");
 			return window.available();
 		}
 		
 		@Override
-		public long skip(long skip) throws IOException {
+		public synchronized long skip(long skip) throws IOException {
 			if (localInputClosed) throw new IOException("StreamChannel Closed");
 			return window.skip(skip);
 		}
