@@ -1,203 +1,295 @@
 package com.github.ezekielnewren.net.multiplexer;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.util.Iterator;
-import java.util.LinkedList;
+import java.net.DatagramPacket;
+import java.security.DigestInputStream;
+import java.security.DigestOutputStream;
+import java.security.MessageDigest;
+import java.util.Random;
+import java.util.Scanner;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+
+import com.github.ezekielnewren.io.*;
+
+import misc.Lib;
 
 public class MuxDriver {
 
-	private static final long TIMEOUT = Long.MAX_VALUE;
-
 	public static void main(String[] args) throws Exception {
-		simple();
+		//cbTest();
+		
+		muxTest();
+		
+		//multiThreadTest();
 		
 	}
 	
-	public static void complex() throws Exception {
-		LinkedList<Thread> tlist = new LinkedList<Thread>();
+	public static void muxTest() throws Exception {
+		final ByteArrayCircularBuffer clientWindow = new ByteArrayCircularBuffer(0xffff);
+		final ByteArrayCircularBuffer serverWindow = new ByteArrayCircularBuffer(0xffff);
 		
-		ByteArrayCircularBuffer near = new ByteArrayCircularBuffer(600);
-		ByteArrayCircularBuffer far = new ByteArrayCircularBuffer(323);
-
-		int[] chans = new int[100];
-		for (int i=0; i<chans.length; i++) chans[i] = i;
+		final Thread[] worker = new Thread[2];
 		
-		Multiplexer clientMux = new Multiplexer(near.getInputStream(), far.getOutputStream());
-		clientMux.segregator.handle.setName("--clientSide--segregator");
-		Multiplexer serverMux = new Multiplexer(far.getInputStream(), near.getOutputStream(), chans);
-		serverMux.segregator.handle.setName("--serverSide--segregator");
+		long total = 1500000000;
 		
-		int actors = 4;
-		
-		final Channel[] io = new Channel[actors];
-		final String[] name = {
-			"alice",
-			"bob",
-			"chuck",
-			"HOST",
-		};
-		int i=0;
-		
-		tlist.add(new Actor(serverMux, name[i], i++) {
-			public void task() throws Exception {
-				Channel alice = smux.accept(17, 101, TIMEOUT);
-				Channel bob = smux.accept(47, 50, TIMEOUT);
-				Channel chuck = smux.accept(99, 8192, TIMEOUT);
-				
-				Thread.sleep(1);
-				
-				alice.close();
-				bob.close();
-				chuck.close();
-			}
-		}.start());
-		
-		tlist.add(new Actor(clientMux, name[i], i++) {
-			public void task() throws IOException {
-				io[id] = cmux.connect(17, 100, TIMEOUT);
-				
-				io[id].close();
-			}
-		}.start());
-		
-		tlist.add(new Actor(clientMux, name[i], i++) {
-			public void task() throws IOException {
-				io[id] = cmux.connect(47, 100, TIMEOUT);
-				
-				
-				
-				io[id].close();
-			}
-		}.start());
-		
-		tlist.add(new Actor(clientMux, name[i], i++) {
-			public void task() throws IOException {
-				io[id] = cmux.connect(99, 100, TIMEOUT);
-				
-				
-				
-				io[id].close();
-			}
-		}.start());
+		long seed = 9857327476839L;
 		
 		
-		
-		
-		
-		
-		
-		
-		
-		
-		
-		Iterator<Thread> it = tlist.iterator();
-		while (it.hasNext()) {
-			it.next().join();
-		}
-	}
-	
-	public static void simple() throws Exception {
-		String ip = "localhost";
-		int port = 8888;
-		ServerSocket ss = new ServerSocket(port);
-		final Socket client = new Socket(ip, port);
-		final Socket server = ss.accept();
-
-		final int channel = 17;
-		final int bufferSize = 23;
-		
-		
-		new Thread(new Runnable() {
+		worker[1] = new Thread(new Runnable() {
 			public void run() {
 				try {
-					ClientMultiplexer m = new Multiplexer(client.getInputStream(), client.getOutputStream());
+					Multiplexer home = new Multiplexer(serverWindow.getInputStream(), clientWindow.getOutputStream(), 0);
+					ServerMultiplexer server = home;
+
+					StreamChannel stream = server.acceptStreamChannel(0, 0x8000, Long.MAX_VALUE);
 					
-					Channel cm = m.connect(channel, bufferSize);
+//					MessageDigest md = MessageDigest.getInstance("MD5");
+//					DigestOutputStream dos = new DigestOutputStream(new NullOutputStream(), md);
 					
-					DataInputStream in = new DataInputStream(cm.getInputStream());
-					DataOutputStream out = new DataOutputStream(cm.getOutputStream());
+					long beg,time;
 					
-					String original = "hello world";
+					beg = System.nanoTime();
+					Lib.copy(stream.getInputStream(), null, new byte[8192], total);
+					time = (System.nanoTime()-beg)/1000000;
+					System.out.println(SPEED.rateOverTime(total, time).toString(true));
 					
-					out.writeUTF(original);
-					String deserialized = in.readUTF();
+//					byte[] digest = md.digest();
+//					
+//					System.out.println("server: "+Lib.bytesToHex(digest));
 					
-					System.out.println(original+"=="+deserialized+(original.equals(deserialized)));
+					stream.close();
 					
-					cm.close();
+					server.close();
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+				
+			}
+		});
+		worker[1].setDaemon(true);
+		worker[1].setName("--server--");
+		
+		worker[0] = new Thread(new Runnable() {
+			public void run() {
+				try {
+					Multiplexer home = new Multiplexer(clientWindow.getInputStream(), serverWindow.getOutputStream());
+					ClientMultiplexer client = home;
+				
+					StreamChannel c = client.connectStreamChannel(0, 27, Long.MAX_VALUE);
 					
-					m.close();
+//					RandomInputStream ris = new RandomInputStream(new Random(seed));
+//					MessageDigest md = MessageDigest.getInstance("MD5");
+//					DigestInputStream dis = new DigestInputStream(ris, md);
+					
+					Lib.copy(null, c.getOutputStream(), new byte[65535], total);
+					
+//					byte[] digest = md.digest();
+//					
+//					System.out.println("client: "+Lib.bytesToHex(digest));
+					
+					
+					c.close();
+					
+					client.close();
 					
 				} catch (Exception e) {
 					e.printStackTrace();
 				}
 			}
-		}).start();
+		});
+		worker[0].setDaemon(true);
+		worker[0].setName("--client--");
 		
-		new Thread(new Runnable() {
-			public void run() {
-				try {
-					ServerMultiplexer m = new Multiplexer(server.getInputStream(), server.getOutputStream(), channel);
-					
-					Channel cm = m.accept(channel, bufferSize);
-					
-					DataInputStream in = new DataInputStream(cm.getInputStream());
-					DataOutputStream out = new DataOutputStream(cm.getOutputStream());
-					
-					String data = in.readUTF();
-					out.writeUTF(data);
-					
-					cm.close();
-					
-					m.close();
-				} catch (Exception e) {
-					e.printStackTrace();
+		
+		
+		
+		worker[0].start();
+		worker[1].start();
+		
+		
+		worker[0].join();
+		worker[1].join();
+	}
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	public static void multiThreadTest() {
+		
+		String[] user = {"John", "Teresa", "Bob", "Bill", "Joe"};
+		
+		Thread[] t = new Thread[user.length];
+		
+		final Object lock = new Object();
+		
+		final AtomicBoolean x = new AtomicBoolean(false);
+		
+		for (int i=0; i<user.length; i++) {
+			t[i] = new Thread(new Runnable(){
+
+				@Override
+				public void run() {
+					try {
+						synchronized(lock) {
+							while (!x.get()) {
+								lock.wait();
+								
+								Lib.doNothing();
+							}
+						}
+					} catch (Exception e) {
+						e.printStackTrace();
+					}
 				}
-			}
-		}).start();
+				
+			});
+			t[i].setName(user[i]);
+			//t[i].setDaemon(true);
+		}
+		
+		for (int i=0; i<user.length; i++) t[i].start();
+		
+		synchronized(lock) {
+			
+			x.set(true);
+			lock.notifyAll();
+			
+			
+		}
+		
+		
 		
 		
 	}
 	
 	
-	static abstract class Actor implements Runnable {
+	
+	public static void cbTest() {
+		try {
+			// 58.181Gbps boundless
+			// 24.739Gbps bounded
+			
+			byte[] cbuff = new byte[150000];
+			ByteArrayCircularBuffer inst = new ByteArrayCircularBuffer(cbuff);
+			byte[] data = "abcde".getBytes();
+			
+			int total = 10000;
+			final long seed = 63873;
+			final Random r = new Random(seed);
+			
+//			RandomInputStream ris = new RandomInputStream(r);
+//			Lib.copy(ris, inst.getOutputStream(), new byte[8192], inst.getBufferSize());
+			
+			long millis = 3*1000;
+			
+			Scanner stdin = new Scanner(System.in);
+			System.out.print("ready? y/n ");
+			stdin.nextLine();
 
-		Thread handle;
-		Multiplexer mux;
-		ClientMultiplexer cmux;
-		ServerMultiplexer smux;
-		int id;
-		
-		public Actor(Multiplexer m, String name, int id) {
-			handle = new Thread(this, name);
-			handle.setDaemon(true);
-			mux = m;
-			cmux = mux;
-			smux = mux;
-			this.id = id;
+//			int count = 0;
+//			
+//			long beg,time;
+//			beg = System.nanoTime();
+//			while ( (time=(System.nanoTime()-beg)/1000000) < millis) {
+//				inst.write(0x40);
+//				inst.read();
+//				count += 2;
+//			}
+//
+//			System.out.println(SPEED.rateOverTime(count, time).toString(false));
+//			
+//			MessageDigest md = MessageDigest.getInstance("MD5");
+//			DigestOutputStream dos = new DigestOutputStream(new NullOutputStream(), md);
+//			
+//			Lib.copy(ris, dos, new byte[8192], total);
+//			dos.close();
+//			
+//			Lib.printBytesInHex(md.digest());
+			
+			
+			final Thread[] worker = new Thread[2];
+			
+			worker[0] = new Thread(new Runnable() {
+				public void run() {
+					try {
+						r.setSeed(seed);
+						RandomInputStream ris = new RandomInputStream(r);
+						
+						//byte[] b = new byte[8192];
+						
+						long count = 0;
+						
+						long beg,time;
+						beg = System.nanoTime();
+						Lib.copy(null, inst.getOutputStream(), new byte[8192], count=8000000000L);
+						inst.closeOutput();
+						time = (System.nanoTime()-beg)/1000000;
+						
+						System.out.println(SPEED.rateOverTime(count, time).toString(true));
+						
+						
+					} catch (Exception e) {
+						e.printStackTrace();
+					}
+				}
+			});
+			worker[0].setDaemon(true);
+			worker[0].setName("--client--");
+			
+			worker[1] = new Thread(new Runnable() {
+				public void run() {
+					try {
+						
+//						byte[] buff = new byte[8192];
+//						long total = 0;
+						
+						Lib.copy(inst.getInputStream(), null);
+						
+						
+					} catch (Exception e) {
+						e.printStackTrace();
+					}
+					
+				}
+			});
+			worker[1].setDaemon(true);
+			worker[1].setName("--server--");
+			
+			
+			worker[0].start();
+			worker[1].start();
+			
+			
+			worker[0].join();
+			worker[1].join();			
+			
+			
+			Lib.doNothing();
+		} catch (Exception e) {
+			e.printStackTrace();
 		}
-		
-		public abstract void task() throws Exception;
-		
-		@Override
-		public void run() {
-			try {
-				task();
-			} catch (Exception e) {
-				e.printStackTrace();
-			}
-		}
-		
-		public Thread start() {
-			handle.start();
-			return handle;
-		}
-		
 	}
 	
 	public static String getState(Multiplexer home, int channel) {
@@ -206,7 +298,7 @@ public class MuxDriver {
 		for (int i=0; i<field.length; i++) {
 			try {
 				String var = field[i].getName();
-				if (var.startsWith("STATE_")&&home.getCP(channel).state == field[i].getLong(home)) {
+				if (var.startsWith("STATE_")&&home.getCM(channel).state == field[i].getLong(home)) {
 					return field[i].getName();
 				}
 			} catch (Exception e) {
@@ -216,6 +308,4 @@ public class MuxDriver {
 		return "STATE_UNKNOWN";
 	}
 
-	
-	
 }

@@ -4,7 +4,10 @@ import java.io.IOException;
 
 public interface ClientMultiplexer extends CoreMultiplexer {
 
-	public Channel connect(int channel, int bufferSize, long timeout) throws IOException;
-	public Channel connect(int channel, int bufferSize) throws IOException;
+	public DatagramPacketChannel connectDatagramPacketChannel(int channel, int recvBufferSize, long timeout) throws IOException;
+	public DatagramPacketChannel connectDatagramPacketChannel(int channel, int bufferSize) throws IOException;
+	
+	public StreamChannel connectStreamChannel(int channel, int recvBufferSize, long timeout) throws IOException;
+	public StreamChannel connectStreamChannel(int channel, int bufferSize) throws IOException;
 	
 }
